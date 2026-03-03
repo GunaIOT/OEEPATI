@@ -1,0 +1,487 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Dashboard Monitoring Mesin Packing</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+  <script src="https://unpkg.com/mqtt/dist/mqtt.min.js"></script>
+  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@400;600;700&family=DM+Mono:wght@300;400;500&family=Outfit:wght@300;400;500;600&display=swap" rel="stylesheet">
+
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            bg:      '#0a0c10',
+            surface: '#0f1218',
+            card:    '#13171f',
+            gold:    '#c5a860',
+            'gold-lt': '#e2c97e',
+          },
+          fontFamily: {
+            serif: ['Cormorant Garamond', 'serif'],
+            mono:  ['DM Mono', 'monospace'],
+            sans:  ['Outfit', 'sans-serif'],
+          },
+        }
+      }
+    }
+  </script>
+
+  <style>
+    body { background: #0a0c10; }
+
+    /* Ambient top glow */
+    .ambient-glow {
+      position: fixed; top: -30vh; left: 50%;
+      transform: translateX(-50%);
+      width: 90vw; height: 70vh;
+      background: radial-gradient(ellipse, rgba(197,168,96,0.055) 0%, transparent 65%);
+      pointer-events: none; z-index: 0;
+    }
+
+    /* Gold top shimmer on online card */
+    .card-online::before {
+      content: '';
+      position: absolute; top: 0; left: 10%; right: 10%; height: 1px;
+      background: linear-gradient(90deg, transparent, #c5a860, transparent);
+    }
+
+    /* Progress glow dot */
+    .prog-dot::after {
+      content: '';
+      position: absolute; right: -2px; top: 50%;
+      transform: translateY(-50%);
+      width: 10px; height: 10px; border-radius: 50%;
+      background: #e2c97e;
+      box-shadow: 0 0 10px rgba(197,168,96,0.9);
+    }
+
+    /* Watermark */
+    .watermark {
+      position: absolute; bottom: -14px; right: 18px;
+      font-family: 'Cormorant Garamond', serif;
+      font-size: 130px; font-weight: 700;
+      color: rgba(255,255,255,0.022);
+      line-height: 1; pointer-events: none; user-select: none;
+    }
+
+    @keyframes fadeUp {
+      from { opacity: 0; transform: translateY(22px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+    @keyframes blink {
+      0%,100% { opacity:1; box-shadow: 0 0 8px #4caf7d; }
+      50%      { opacity:0.4; box-shadow: 0 0 2px #4caf7d; }
+    }
+    @keyframes prog-anim {
+      from { width: 0%; }
+    }
+
+    .fade-up-1 { animation: fadeUp 0.7s ease both; }
+    .fade-up-2 { animation: fadeUp 0.7s ease 0.1s both; }
+    .fade-up-3 { animation: fadeUp 0.7s ease 0.2s both; }
+    .fade-up-4 { animation: fadeUp 0.7s ease 0.3s both; }
+
+    .live-dot {
+      width: 7px; height: 7px; border-radius: 50%;
+      background: #4caf7d; box-shadow: 0 0 8px #4caf7d;
+      animation: blink 2s infinite; display: inline-block;
+    }
+
+    .progress-bar {
+      transition: width 0.9s cubic-bezier(0.4,0,0.2,1);
+    }
+
+    /* Hover lift */
+    .hover-lift { transition: transform 0.25s ease, border-color 0.3s ease; }
+    .hover-lift:hover { transform: translateY(-2px); }
+
+    select option { background: #13171f; }
+
+    input[type="date"]::-webkit-calendar-picker-indicator { filter: invert(0.5); }
+  </style>
+</head>
+
+<body class="font-sans text-stone-200 min-h-screen">
+<div class="ambient-glow"></div>
+
+<div class="relative z-10 max-w-[1300px] mx-auto px-6 py-11 pb-20">
+
+  <!-- ══ HEADER ══ -->
+  <header class="flex items-end justify-between mb-14 pb-8 border-b border-white/[0.07] fade-up-1">
+    <div>
+      <p class="font-mono text-[10px] tracking-[0.28em] text-gold uppercase mb-2">Finished Good — Production Floor</p>
+      <h1 class="font-serif text-5xl font-semibold text-stone-100 leading-tight">
+        Monitoring Mesin <span class="text-gold">Packing</span>
+      </h1>
+    </div>
+    <div class="flex flex-col items-end gap-1.5">
+      <div class="flex items-center gap-2 font-mono text-[10px] tracking-[0.14em] text-stone-500">
+        <span class="live-dot"></span> Real-time monitoring
+      </div>
+      <div id="clock" class="font-mono text-2xl text-stone-100 tracking-wider">--:--:--</div>
+      <div id="date-label" class="text-[11px] text-stone-500 tracking-wider"></div>
+    </div>
+  </header>
+
+  <!-- ══ MACHINE CARDS ══ -->
+  <div class="grid grid-cols-1 xl:grid-cols-2 gap-5 mb-5">
+
+    <!-- ─ MESIN 1 ─ -->
+    <div id="machine1"
+         class="relative overflow-hidden bg-card rounded-2xl border border-white/[0.07] p-8 fade-up-1">
+      <div class="watermark">1</div>
+
+      <!-- Card head -->
+      <div class="flex items-center justify-between mb-7">
+        <div class="flex items-center gap-3.5">
+          <div class="w-11 h-11 rounded-xl flex items-center justify-center text-xl
+                      bg-gold/10 border border-gold/20">⚙️</div>
+          <div>
+            <div class="font-serif text-[22px] font-semibold text-stone-100">Mesin Packing #1</div>
+            <div class="text-[11px] text-stone-500 tracking-wider mt-0.5">Rotary Seal Unit</div>
+          </div>
+        </div>
+        <span id="status1"
+              class="font-mono text-[9px] tracking-[0.2em] uppercase px-3.5 py-1.5 rounded-full
+                     bg-red-500/10 text-red-400 border border-red-500/25">
+          Offline
+        </span>
+      </div>
+
+      <!-- Stats Row 1: Total + Target -->
+      <div class="grid grid-cols-2 gap-3.5 mb-3">
+        <div class="hover-lift bg-surface rounded-xl border border-white/[0.07] p-5">
+          <div class="font-mono text-[9px] tracking-[0.2em] uppercase text-stone-500 mb-2.5">Total Pieces</div>
+          <div id="pieces1" class="font-mono text-[38px] font-light text-gold-lt leading-none tracking-tighter">0</div>
+          <div class="text-[10px] text-stone-600 mt-1.5 tracking-wider">pcs terpacking</div>
+        </div>
+        <div class="hover-lift bg-surface rounded-xl border border-white/[0.07] p-5">
+          <div class="font-mono text-[9px] tracking-[0.2em] uppercase text-stone-500 mb-2.5">Target Shift</div>
+          <div id="target1" class="font-mono text-[38px] font-light text-gold-lt leading-none tracking-tighter">0</div>
+          <div class="text-[10px] text-stone-600 mt-1.5 tracking-wider">pcs</div>
+          <div class="mt-3 pt-3 border-t border-white/[0.05] flex items-center gap-2">
+            <span class="font-mono text-[8px] tracking-[0.18em] uppercase text-stone-600">Est. Waktu</span>
+            <span id="estimasi1" class="font-mono text-[13px] text-gold font-medium">—</span>
+          </div>
+        </div>
+      </div>
+      <!-- Stats Row 2: Input Good + Input No Obj -->
+      <div class="grid grid-cols-2 gap-3.5 mb-5">
+        <div class="hover-lift bg-surface rounded-xl border border-emerald-500/10 p-5">
+          <div class="font-mono text-[9px] tracking-[0.2em] uppercase text-stone-500 mb-2.5">Input Good (1)</div>
+          <div id="inputOne1" class="font-mono text-[32px] font-light text-emerald-400 leading-none tracking-tighter">0</div>
+          <div class="text-[10px] text-stone-600 mt-1.5 tracking-wider">pcs</div>
+        </div>
+        <div class="hover-lift bg-surface rounded-xl border border-red-500/10 p-5">
+          <div class="font-mono text-[9px] tracking-[0.2em] uppercase text-stone-500 mb-2.5">Input No Obj (0)</div>
+          <div id="inputZero1" class="font-mono text-[32px] font-light text-red-400 leading-none tracking-tighter">0</div>
+          <div class="text-[10px] text-stone-600 mt-1.5 tracking-wider">pcs</div>
+        </div>
+      </div>
+
+      <!-- Time metrics 4 kotak -->
+      <div class="grid grid-cols-2 gap-3 mb-3">
+        <div class="bg-surface rounded-xl border border-white/[0.07] p-3.5 text-center">
+          <div class="font-mono text-[8px] tracking-[0.2em] uppercase text-stone-500 mb-2">Setup Time</div>
+          <div id="setupTime1" class="font-mono text-[15px] font-medium tracking-wide text-yellow-400/90">00:00:00</div>
+        </div>
+        <div class="bg-surface rounded-xl border border-amber-500/20 p-3.5 text-center">
+          <div class="font-mono text-[8px] tracking-[0.2em] uppercase text-stone-500 mb-1">Lost Time</div>
+          <div id="lostTime1" class="font-mono text-[15px] font-medium tracking-wide text-amber-400/90">00:00:00</div>
+          <div id="lostTimeSec1" class="font-mono text-[11px] text-amber-400/55 mt-1 tracking-wider">0.000 s</div>
+        </div>
+      </div>
+      <div class="grid grid-cols-2 gap-3 mb-6">
+        <div class="bg-surface rounded-xl border border-sky-500/20 p-3.5 text-center">
+          <div class="font-mono text-[8px] tracking-[0.2em] uppercase text-stone-500 mb-2">Runtime</div>
+          <div id="runtime1" class="font-mono text-[15px] font-medium tracking-wide text-sky-400/90">00:00:00</div>
+        </div>
+        <div class="bg-surface rounded-xl border border-white/[0.07] p-3.5 text-center">
+          <div class="font-mono text-[8px] tracking-[0.2em] uppercase text-stone-500 mb-2">Downtime</div>
+          <div id="downtime1" class="font-mono text-[15px] font-medium tracking-wide text-red-400/90">00:00:00</div>
+        </div>
+      </div>
+
+      <!-- Operator -->
+      <div class="flex items-center justify-between pt-4 border-t border-white/[0.07]">
+        <div class="flex items-center gap-3">
+          <div class="w-8 h-8 rounded-full bg-gold/10 border border-gold/20 flex items-center justify-center text-sm">👤</div>
+          <div>
+            <div class="text-[13px] font-medium text-stone-200">Budi Santoso</div>
+            <div class="text-[10px] text-stone-500 tracking-wide">Machine Operator</div>
+          </div>
+        </div>
+        <div class="font-mono text-[9px] tracking-[0.12em] text-gold bg-gold/10 border border-gold/20 px-3 py-1.5 rounded-full">
+          Shift 1 · 06:00–14:00
+        </div>
+      </div>
+    </div>
+
+    <!-- ─ MESIN 2 ─ -->
+    <div id="machine2"
+         class="relative overflow-hidden bg-card rounded-2xl border border-white/[0.07] p-8 fade-up-2">
+      <div class="watermark">2</div>
+
+      <div class="flex items-center justify-between mb-7">
+        <div class="flex items-center gap-3.5">
+          <div class="w-11 h-11 rounded-xl flex items-center justify-center text-xl
+                      bg-gold/10 border border-gold/20">⚙️</div>
+          <div>
+            <div class="font-serif text-[22px] font-semibold text-stone-100">Mesin Packing #2</div>
+            <div class="text-[11px] text-stone-500 tracking-wider mt-0.5">Rotary Seal Unit</div>
+          </div>
+        </div>
+        <span id="status2"
+              class="font-mono text-[9px] tracking-[0.2em] uppercase px-3.5 py-1.5 rounded-full
+                     bg-white/[0.04] text-stone-500 border border-white/[0.07]">
+          Standby
+        </span>
+      </div>
+
+      <!-- Stats Row 1: Total + Target -->
+      <div class="grid grid-cols-2 gap-3.5 mb-3">
+        <div class="hover-lift bg-surface rounded-xl border border-white/[0.07] p-5">
+          <div class="font-mono text-[9px] tracking-[0.2em] uppercase text-stone-500 mb-2.5">Total Pieces</div>
+          <div id="pieces2" class="font-mono text-[38px] font-light text-gold-lt leading-none tracking-tighter">0</div>
+          <div class="text-[10px] text-stone-600 mt-1.5 tracking-wider">pcs terpacking</div>
+        </div>
+        <div class="hover-lift bg-surface rounded-xl border border-white/[0.07] p-5">
+          <div class="font-mono text-[9px] tracking-[0.2em] uppercase text-stone-500 mb-2.5">Target Shift</div>
+          <div id="target2" class="font-mono text-[38px] font-light text-gold-lt leading-none tracking-tighter">0</div>
+          <div class="text-[10px] text-stone-600 mt-1.5 tracking-wider">pcs</div>
+          <div class="mt-3 pt-3 border-t border-white/[0.05] flex items-center gap-2">
+            <span class="font-mono text-[8px] tracking-[0.18em] uppercase text-stone-600">Est. Waktu</span>
+            <span id="estimasi2" class="font-mono text-[13px] text-gold font-medium">—</span>
+          </div>
+        </div>
+      </div>
+      <!-- Stats Row 2: Input Good + Input No Obj -->
+      <div class="grid grid-cols-2 gap-3.5 mb-5">
+        <div class="hover-lift bg-surface rounded-xl border border-emerald-500/10 p-5">
+          <div class="font-mono text-[9px] tracking-[0.2em] uppercase text-stone-500 mb-2.5">Input Good (1)</div>
+          <div id="inputOne2" class="font-mono text-[32px] font-light text-emerald-400 leading-none tracking-tighter">0</div>
+          <div class="text-[10px] text-stone-600 mt-1.5 tracking-wider">pcs</div>
+        </div>
+        <div class="hover-lift bg-surface rounded-xl border border-red-500/10 p-5">
+          <div class="font-mono text-[9px] tracking-[0.2em] uppercase text-stone-500 mb-2.5">Input No Obj (0)</div>
+          <div id="inputZero2" class="font-mono text-[32px] font-light text-red-400 leading-none tracking-tighter">0</div>
+          <div class="text-[10px] text-stone-600 mt-1.5 tracking-wider">pcs</div>
+        </div>
+      </div>
+
+      <!-- Time metrics 4 kotak -->
+      <div class="grid grid-cols-2 gap-3 mb-3">
+        <div class="bg-surface rounded-xl border border-white/[0.07] p-3.5 text-center">
+          <div class="font-mono text-[8px] tracking-[0.2em] uppercase text-stone-500 mb-2">Setup Time</div>
+          <div id="setupTime2" class="font-mono text-[15px] font-medium tracking-wide text-yellow-400/90">00:00:00</div>
+        </div>
+        <div class="bg-surface rounded-xl border border-amber-500/20 p-3.5 text-center">
+          <div class="font-mono text-[8px] tracking-[0.2em] uppercase text-stone-500 mb-1">Lost Time</div>
+          <div id="lostTime2" class="font-mono text-[15px] font-medium tracking-wide text-amber-400/90">00:00:00</div>
+          <div id="lostTimeSec2" class="font-mono text-[11px] text-amber-400/55 mt-1 tracking-wider">0.000 s</div>
+        </div>
+      </div>
+      <div class="grid grid-cols-2 gap-3 mb-6">
+        <div class="bg-surface rounded-xl border border-sky-500/20 p-3.5 text-center">
+          <div class="font-mono text-[8px] tracking-[0.2em] uppercase text-stone-500 mb-2">Runtime</div>
+          <div id="runtime2" class="font-mono text-[15px] font-medium tracking-wide text-sky-400/90">00:00:00</div>
+        </div>
+        <div class="bg-surface rounded-xl border border-white/[0.07] p-3.5 text-center">
+          <div class="font-mono text-[8px] tracking-[0.2em] uppercase text-stone-500 mb-2">Downtime</div>
+          <div id="downtime2" class="font-mono text-[15px] font-medium tracking-wide text-red-400/90">00:00:00</div>
+        </div>
+      </div>
+
+      <div class="flex items-center justify-between pt-4 border-t border-white/[0.07]">
+        <div class="flex items-center gap-3">
+          <div class="w-8 h-8 rounded-full bg-gold/10 border border-gold/20 flex items-center justify-center text-sm">👤</div>
+          <div>
+            <div class="text-[13px] font-medium text-stone-200">Siti Nurhaliza</div>
+            <div class="text-[10px] text-stone-500 tracking-wide">Machine Operator</div>
+          </div>
+        </div>
+        <div class="font-mono text-[9px] tracking-[0.12em] text-gold bg-gold/10 border border-gold/20 px-3 py-1.5 rounded-full">
+          Shift 1 · 06:00–14:00
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══ SUMMARY ══ -->
+  <div class="bg-card rounded-2xl border border-white/[0.07] p-8 mb-5 fade-up-3">
+    <div class="flex items-center gap-4 mb-7">
+      <div class="w-[3px] h-7 rounded-sm" style="background: linear-gradient(180deg,#c5a860,transparent)"></div>
+      <h2 class="font-serif text-[21px] font-semibold text-stone-100">Ringkasan Produksi Harian</h2>
+    </div>
+
+    <div class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3.5">
+      <div class="hover-lift bg-surface rounded-xl border border-white/[0.07] p-6 text-center">
+        <div class="font-mono text-[8px] tracking-[0.22em] uppercase text-stone-500 mb-3">Total Produksi</div>
+        <div id="total-production" class="font-mono text-[32px] font-light leading-none text-emerald-400">0</div>
+      </div>
+      <div class="hover-lift bg-surface rounded-xl border border-white/[0.07] p-6 text-center">
+        <div class="font-mono text-[8px] tracking-[0.22em] uppercase text-stone-500 mb-3">Total Target</div>
+        <div id="total-target" class="font-mono text-[32px] font-light leading-none text-gold-lt">0</div>
+      </div>
+      <div class="hover-lift bg-surface rounded-xl border border-white/[0.07] p-6 text-center">
+        <div class="font-mono text-[8px] tracking-[0.22em] uppercase text-stone-500 mb-3">Persentase</div>
+        <div id="total-percent" class="font-mono text-[32px] font-light leading-none text-violet-400">0%</div>
+      </div>
+      <div class="hover-lift bg-surface rounded-xl border border-white/[0.07] p-6 text-center">
+        <div class="font-mono text-[8px] tracking-[0.22em] uppercase text-stone-500 mb-3">Mesin Aktif</div>
+        <div id="active-machines" class="font-mono text-[32px] font-light leading-none text-amber-400">0</div>
+      </div>
+      <div class="hover-lift bg-surface rounded-xl border border-emerald-500/10 p-6 text-center">
+        <div class="font-mono text-[8px] tracking-[0.22em] uppercase text-stone-500 mb-3">Total Good (1)</div>
+        <div id="total-input-good" class="font-mono text-[32px] font-light leading-none text-emerald-400">0</div>
+      </div>
+      <div class="hover-lift bg-surface rounded-xl border border-red-500/10 p-6 text-center">
+        <div class="font-mono text-[8px] tracking-[0.22em] uppercase text-stone-500 mb-3">Total No Obj (0)</div>
+        <div id="total-input-zero" class="font-mono text-[32px] font-light leading-none text-red-400">0</div>
+      </div>
+    </div>
+
+    <div class="flex justify-between items-center pt-5 mt-6 border-t border-white/[0.07]">
+      <div class="font-mono text-[10px] tracking-widest text-stone-500">
+        MQTT — <span id="mqtt-status" class="text-gold">Connecting...</span>
+      </div>
+      <div class="font-mono text-[10px] tracking-widest text-stone-500">
+        Last update — <span id="update-time" class="text-gold">--:--:--</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══ OEE GAUGES ══ -->
+  <div class="bg-card rounded-2xl border border-white/[0.07] p-8 mb-5 fade-up-4">
+    <div class="flex items-center justify-between mb-2">
+      <div class="flex items-center gap-4">
+        <div class="w-[3px] h-7 rounded-sm" style="background: linear-gradient(180deg,#c5a860,transparent)"></div>
+        <h2 class="font-serif text-[21px] font-semibold text-stone-100">OEE Rate</h2>
+      </div>
+      <div class="font-mono text-[9px] tracking-[0.18em] uppercase text-stone-500">
+        Overall Equipment Effectiveness
+      </div>
+    </div>
+    <p class="font-mono text-[9px] text-stone-600 tracking-wider mb-8 ml-[19px]">
+      Availability · Performance · Quality
+    </p>
+
+    <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+
+      <!-- AR -->
+      <div class="bg-surface rounded-2xl border border-white/[0.07] p-6 flex flex-col items-center">
+        <div class="font-mono text-[9px] tracking-[0.22em] uppercase text-stone-500 mb-1">Availability Rate</div>
+        <div class="font-mono text-[9px] text-stone-600 tracking-wider mb-4">AR = Runtime / Total Time</div>
+        <div class="relative w-full" style="max-width:240px">
+          <canvas id="gauge-ar" width="240" height="140"></canvas>
+        </div>
+        <div id="ar-value" class="font-mono text-[38px] font-light leading-none mt-1" style="color:#4ade80">0%</div>
+        <div id="ar-label" class="font-mono text-[9px] tracking-[0.15em] uppercase mt-2 text-stone-500">—</div>
+      </div>
+
+      <!-- PR -->
+      <div class="bg-surface rounded-2xl border border-white/[0.07] p-6 flex flex-col items-center">
+        <div class="font-mono text-[9px] tracking-[0.22em] uppercase text-stone-500 mb-1">Performance Rate</div>
+        <div class="font-mono text-[9px] text-stone-600 tracking-wider mb-4">PR = Actual / Target Output</div>
+        <div class="relative w-full" style="max-width:240px">
+          <canvas id="gauge-pr" width="240" height="140"></canvas>
+        </div>
+        <div id="pr-value" class="font-mono text-[38px] font-light leading-none mt-1" style="color:#60a5fa">0%</div>
+        <div id="pr-label" class="font-mono text-[9px] tracking-[0.15em] uppercase mt-2 text-stone-500">—</div>
+      </div>
+
+      <!-- QR -->
+      <div class="bg-surface rounded-2xl border border-white/[0.07] p-6 flex flex-col items-center">
+        <div class="font-mono text-[9px] tracking-[0.22em] uppercase text-stone-500 mb-1">Quality Rate</div>
+        <div class="font-mono text-[9px] text-stone-600 tracking-wider mb-4">QR = Good / Total Pieces</div>
+        <div class="relative w-full" style="max-width:240px">
+          <canvas id="gauge-qr" width="240" height="140"></canvas>
+        </div>
+        <div id="qr-value" class="font-mono text-[38px] font-light leading-none mt-1" style="color:#a78bfa">0%</div>
+        <div id="qr-label" class="font-mono text-[9px] tracking-[0.15em] uppercase mt-2 text-stone-500">—</div>
+      </div>
+
+    </div>
+
+    <!-- OEE Total -->
+    <div class="mt-6 pt-6 border-t border-white/[0.07] flex items-center justify-between">
+      <div class="flex items-center gap-3">
+        <div class="font-mono text-[9px] tracking-[0.2em] uppercase text-stone-500">OEE Score</div>
+        <div class="font-mono text-[9px] text-stone-600">= AR × PR × QR</div>
+      </div>
+      <div class="flex items-center gap-4">
+        <div id="oee-bar-wrap" class="h-2 w-48 bg-white/[0.07] rounded-full overflow-hidden">
+          <div id="oee-bar" class="h-full rounded-full progress-bar" style="width:0%; background: linear-gradient(90deg,#c5a860,#e2c97e); box-shadow: 0 0 10px rgba(197,168,96,0.5);"></div>
+        </div>
+        <div id="oee-value" class="font-mono text-[28px] font-light text-gold-lt leading-none">0%</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══ DOWNLOAD ══ -->
+  <div class="bg-card rounded-2xl border border-white/[0.07] p-8 fade-up-4">
+    <div class="flex items-center gap-4 mb-7">
+      <div class="w-[3px] h-7 rounded-sm" style="background: linear-gradient(180deg,#c5a860,transparent)"></div>
+      <h2 class="font-serif text-[21px] font-semibold text-stone-100">Download Laporan</h2>
+    </div>
+
+    <div class="grid grid-cols-1 md:grid-cols-3 gap-4 items-end mb-5">
+      <div>
+        <label class="block font-mono text-[9px] tracking-[0.2em] uppercase text-stone-500 mb-2">Tanggal</label>
+        <input type="date" id="download-date"
+               class="w-full bg-surface border border-white/[0.07] rounded-xl px-4 py-3
+                      text-stone-200 font-sans text-[13px] outline-none
+                      focus:border-gold/40 transition-colors">
+      </div>
+      <div>
+        <label class="block font-mono text-[9px] tracking-[0.2em] uppercase text-stone-500 mb-2">Shift</label>
+        <select id="download-shift"
+                class="w-full bg-surface border border-white/[0.07] rounded-xl px-4 py-3
+                       text-stone-200 font-sans text-[13px] outline-none
+                       focus:border-gold/40 transition-colors appearance-none">
+          <option value="1">Shift 1 — Pagi 06:00–14:00</option>
+          <option value="2">Shift 2 — Siang 14:00–22:00</option>
+          <option value="3">Shift 3 — Malam 22:00–06:00</option>
+        </select>
+      </div>
+      <div>
+        <button onclick="downloadExcel()"
+                class="w-full font-mono text-[10px] tracking-[0.18em] uppercase font-medium
+                       text-bg px-6 py-3.5 rounded-xl
+                       transition-all duration-200 hover:opacity-85 hover:-translate-y-px active:translate-y-0"
+                style="background: linear-gradient(135deg,#c5a860,#9a7824); box-shadow: 0 4px 22px rgba(197,168,96,0.22);">
+          ↓ Export Excel
+        </button>
+      </div>
+    </div>
+
+    <div class="flex gap-3 items-start bg-gold/[0.04] border border-gold/10 rounded-xl p-4 text-[12px] text-stone-500 leading-relaxed">
+      <span class="text-gold text-[8px] mt-1 flex-shrink-0">◆</span>
+      Data yang diunduh mencakup total pieces terpacking, target produksi, setup time, lost time, dan downtime untuk shift yang dipilih.
+    </div>
+  </div>
+
+</div><!-- /wrapper -->
+
+<script src="dashboard.js"></script>
+<script>
+  // Live clock
+  function tick() {
+    const n = new Date();
+    document.getElementById('clock').innerText = n.toLocaleTimeString('id-ID');
+    document.getElementById('date-label').innerText =
+      n.toLocaleDateString('id-ID', { weekday:'long', day:'numeric', month:'long', year:'numeric' });
+  }
+  tick(); setInterval(tick, 1000);
+
+  // Default date
+  const n = new Date();
+  document.getElementById('download-date').value =
+    `${n.getFullYear()}-${String(n.getMonth()+1).padStart(2,'0')}-${String(n.getDate()).padStart(2,'0')}`;
+</script>
+</body>
+</html>

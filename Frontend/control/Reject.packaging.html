@@ -1,0 +1,462 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Reject Packaging Material — Rotary Seal</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://unpkg.com/mqtt/dist/mqtt.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@400;600;700&family=DM+Mono:wght@300;400;500&family=Outfit:wght@300;400;500;600&display=swap" rel="stylesheet">
+
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            bg:       '#0a0c10',
+            surface:  '#0f1218',
+            card:     '#13171f',
+            gold:     '#c5a860',
+            'gold-lt':'#e2c97e',
+          },
+          fontFamily: {
+            serif: ['Cormorant Garamond','serif'],
+            mono:  ['DM Mono','monospace'],
+            sans:  ['Outfit','sans-serif'],
+          }
+        }
+      }
+    }
+  </script>
+
+  <style>
+    body { background:#0a0c10; }
+
+    .ambient-glow {
+      position:fixed; top:-30vh; left:50%;
+      transform:translateX(-50%);
+      width:90vw; height:70vh;
+      background:radial-gradient(ellipse,rgba(197,168,96,.05) 0%,transparent 65%);
+      pointer-events:none; z-index:0;
+    }
+
+    @keyframes fadeUp {
+      from{opacity:0;transform:translateY(20px)}
+      to  {opacity:1;transform:translateY(0)}
+    }
+    @keyframes blink {
+      0%,100%{opacity:1;box-shadow:0 0 8px #4caf7d}
+      50%    {opacity:.4;box-shadow:0 0 2px #4caf7d}
+    }
+    @keyframes numpad-in {
+      from{opacity:0;transform:scale(.92) translateY(16px)}
+      to  {opacity:1;transform:scale(1) translateY(0)}
+    }
+
+    .fade-up-1{animation:fadeUp .7s ease both}
+    .fade-up-2{animation:fadeUp .7s ease .1s both}
+    .fade-up-3{animation:fadeUp .7s ease .2s both}
+
+    .live-dot{
+      width:7px;height:7px;border-radius:50%;
+      background:#4caf7d;box-shadow:0 0 8px #4caf7d;
+      animation:blink 2s infinite;display:inline-block;flex-shrink:0;
+    }
+
+    .watermark{
+      position:absolute;bottom:-14px;right:18px;
+      font-family:'Cormorant Garamond',serif;
+      font-size:130px;font-weight:700;
+      color:rgba(255,255,255,.02);
+      line-height:1;pointer-events:none;user-select:none;
+    }
+
+    .reject-row{
+      display:flex;align-items:center;gap:12px;
+      background:#0f1218;
+      border:1px solid rgba(255,255,255,.07);
+      border-radius:14px;padding:13px 16px;
+      cursor:pointer;
+      transition:border-color .2s,background .2s,transform .15s;
+      user-select:none;
+    }
+    .reject-row:hover{
+      border-color:rgba(197,168,96,.3);
+      background:#111520;transform:translateX(3px);
+    }
+    .reject-row:active{transform:scale(.98);}
+    .reject-arr{
+      font-size:18px;color:#44403c;
+      transition:color .2s,transform .2s;
+    }
+    .reject-row:hover .reject-arr{color:#c5a860;transform:translateX(2px);}
+
+    .numpad-overlay{
+      position:fixed;inset:0;
+      background:rgba(0,0,0,.82);
+      backdrop-filter:blur(6px);
+      display:flex;align-items:center;justify-content:center;
+      z-index:1000;
+      opacity:0;pointer-events:none;
+      transition:opacity .2s;
+    }
+    .numpad-overlay.active{opacity:1;pointer-events:all;}
+    .numpad-card{
+      background:#13171f;
+      border:1px solid rgba(197,168,96,.2);
+      border-radius:24px;
+      padding:28px 24px 24px;
+      width:320px;
+      box-shadow:0 0 80px rgba(0,0,0,.7),0 0 30px rgba(197,168,96,.06);
+      animation:numpad-in .25s cubic-bezier(.34,1.56,.64,1) both;
+    }
+    .numBtn{
+      background:#0f1218;
+      border:1px solid rgba(255,255,255,.08);
+      border-radius:12px;
+      font-family:'DM Mono',monospace;
+      font-size:22px;font-weight:300;
+      color:#d6d3d1;padding:18px 0;
+      cursor:pointer;transition:all .12s;
+      text-align:center;line-height:1;
+    }
+    .numBtn:hover{
+      background:#1a1f2a;
+      border-color:rgba(197,168,96,.3);
+      color:#e2c97e;
+      box-shadow:0 0 12px rgba(197,168,96,.08);
+    }
+    .numBtn:active{transform:scale(.93);background:#0a0c10;border-color:rgba(197,168,96,.5);}
+
+    .hover-lift{transition:transform .25s ease,border-color .3s ease;}
+    .hover-lift:hover{transform:translateY(-2px);}
+
+    .toast{
+      position:fixed;bottom:28px;right:28px;
+      background:#13171f;
+      border:1px solid rgba(74,222,128,.3);
+      color:#4ade80;padding:14px 22px;
+      border-radius:12px;
+      font-family:'DM Mono',monospace;
+      font-size:12px;letter-spacing:.1em;
+      opacity:0;transform:translateY(10px);
+      transition:all .3s;pointer-events:none;
+      box-shadow:0 0 24px rgba(74,222,128,.1);
+      z-index:2000;
+    }
+    .toast.show{opacity:1;transform:translateY(0);}
+
+    select option{background:#13171f;}
+    canvas{display:block;}
+  </style>
+</head>
+
+<body class="font-sans text-stone-200 min-h-screen">
+<div class="ambient-glow"></div>
+
+<div class="relative z-10 max-w-[1300px] mx-auto px-6 py-10 pb-20">
+
+  <!-- ══ HEADER ══ -->
+  <header class="flex items-end justify-between mb-12 pb-7 border-b border-white/[0.07] fade-up-1">
+    <div>
+      <p class="font-mono text-[10px] tracking-[0.28em] text-gold uppercase mb-2">
+        Finished Good — Reject Packaging Material
+      </p>
+      <h1 class="font-serif text-5xl font-semibold text-stone-100 leading-tight">
+        Reject <span class="text-gold">Packaging</span>
+      </h1>
+      <p class="font-mono text-[11px] text-stone-500 tracking-widest mt-1.5">ROTARY SEAL UNIT</p>
+    </div>
+    <div class="flex flex-col items-end gap-2">
+      <div class="flex items-center gap-2 font-mono text-[10px] tracking-[0.14em] text-stone-500">
+        <span class="live-dot"></span>
+        MQTT — <span id="mqtt-status" class="text-amber-400 ml-1">Connecting...</span>
+      </div>
+      <div id="clock" class="font-mono text-2xl text-stone-100 tracking-wider">--:--:--</div>
+      <div id="today" class="text-[11px] text-stone-500 tracking-wider"></div>
+    </div>
+  </header>
+
+  <!-- ══ STAT CARDS ══ -->
+  <section class="mb-5 fade-up-1">
+    <div class="grid grid-cols-2 md:grid-cols-4 gap-3.5">
+
+      <div class="hover-lift bg-card rounded-2xl border border-white/[0.07] p-6 text-center">
+        <div class="font-mono text-[8px] tracking-[0.22em] uppercase text-stone-500 mb-3">Total Produksi</div>
+        <div id="disp-produksi" class="font-mono text-[38px] font-light leading-none text-emerald-400">0</div>
+        <div class="font-mono text-[9px] text-stone-600 mt-1.5">pcs</div>
+      </div>
+
+      <div class="hover-lift bg-card rounded-2xl border border-white/[0.07] p-6 text-center">
+        <div class="font-mono text-[8px] tracking-[0.22em] uppercase text-stone-500 mb-3">Total Target</div>
+        <div id="disp-target" class="font-mono text-[38px] font-light leading-none text-gold-lt">0</div>
+        <div class="font-mono text-[9px] text-stone-600 mt-1.5">pcs</div>
+      </div>
+
+      <div class="hover-lift bg-card rounded-2xl border border-emerald-500/10 p-6 text-center">
+        <div class="font-mono text-[8px] tracking-[0.22em] uppercase text-stone-500 mb-3">Net Good (1)</div>
+        <div id="disp-good" class="font-mono text-[38px] font-light leading-none text-emerald-400">0</div>
+        <div class="font-mono text-[9px] text-stone-600 mt-1.5">Good(1) − Reject</div>
+      </div>
+
+      <div class="hover-lift bg-card rounded-2xl border border-red-500/10 p-6 text-center">
+        <div class="font-mono text-[8px] tracking-[0.22em] uppercase text-stone-500 mb-3">Total Reject</div>
+        <div id="disp-reject" class="font-mono text-[38px] font-light leading-none text-red-400">0</div>
+        <div class="font-mono text-[9px] text-stone-600 mt-1.5">pcs</div>
+      </div>
+
+    </div>
+  </section>
+
+  <!-- ══ MAIN: REJECT INPUT + BREAKDOWN ══ -->
+  <div class="grid grid-cols-1 xl:grid-cols-2 gap-5 mb-5 fade-up-2">
+
+    <!-- ─ LEFT: Reject List ─ -->
+    <div class="relative overflow-hidden bg-card rounded-2xl border border-white/[0.07] p-8">
+      <div class="watermark">R</div>
+
+      <div class="flex items-center gap-4 mb-7">
+        <div class="w-[3px] h-7 rounded-sm" style="background:linear-gradient(180deg,#f87171,transparent)"></div>
+        <div>
+          <h2 class="font-serif text-[21px] font-semibold text-stone-100">Jenis Reject Packaging</h2>
+          <p class="font-mono text-[9px] text-stone-600 tracking-widest mt-0.5">Tap untuk memasukkan jumlah</p>
+        </div>
+      </div>
+
+      <!-- Reject rows -->
+      <div class="flex flex-col gap-2.5" id="reject-list">
+
+        <div class="reject-row" onclick="openNumpad('Kosong')">
+          <div class="w-7 h-7 flex-shrink-0 rounded-lg flex items-center justify-center
+                      font-mono text-[11px] font-medium text-red-400
+                      bg-red-500/10 border border-red-500/20">1</div>
+          <div class="flex-1 font-sans text-[14px] text-stone-300 tracking-wide">Kosong</div>
+          <div id="rv-Kosong" class="font-mono text-[20px] font-light text-red-400 min-w-[40px] text-right">0</div>
+          <div class="font-mono text-[9px] text-stone-600 ml-1">pcs</div>
+          <div class="reject-arr ml-2">›</div>
+        </div>
+
+        <div class="reject-row" onclick="openNumpad('Coding')">
+          <div class="w-7 h-7 flex-shrink-0 rounded-lg flex items-center justify-center
+                      font-mono text-[11px] font-medium text-orange-400
+                      bg-orange-500/10 border border-orange-500/20">2</div>
+          <div class="flex-1 font-sans text-[14px] text-stone-300 tracking-wide">Coding</div>
+          <div id="rv-Coding" class="font-mono text-[20px] font-light text-orange-400 min-w-[40px] text-right">0</div>
+          <div class="font-mono text-[9px] text-stone-600 ml-1">pcs</div>
+          <div class="reject-arr ml-2">›</div>
+        </div>
+
+        <div class="reject-row" onclick="openNumpad('Seal')">
+          <div class="w-7 h-7 flex-shrink-0 rounded-lg flex items-center justify-center
+                      font-mono text-[11px] font-medium text-yellow-400
+                      bg-yellow-500/10 border border-yellow-500/20">3</div>
+          <div class="flex-1 font-sans text-[14px] text-stone-300 tracking-wide">Seal</div>
+          <div id="rv-Seal" class="font-mono text-[20px] font-light text-yellow-400 min-w-[40px] text-right">0</div>
+          <div class="font-mono text-[9px] text-stone-600 ml-1">pcs</div>
+          <div class="reject-arr ml-2">›</div>
+        </div>
+
+        <div class="reject-row" onclick="openNumpad('Kurang Angin')">
+          <div class="w-7 h-7 flex-shrink-0 rounded-lg flex items-center justify-center
+                      font-mono text-[11px] font-medium text-violet-400
+                      bg-violet-500/10 border border-violet-500/20">4</div>
+          <div class="flex-1 font-sans text-[14px] text-stone-300 tracking-wide">Kurang Angin</div>
+          <div id="rv-KurangAngin" class="font-mono text-[20px] font-light text-violet-400 min-w-[40px] text-right">0</div>
+          <div class="font-mono text-[9px] text-stone-600 ml-1">pcs</div>
+          <div class="reject-arr ml-2">›</div>
+        </div>
+
+        <div class="reject-row" onclick="openNumpad('Gramasi Unstandart')">
+          <div class="w-7 h-7 flex-shrink-0 rounded-lg flex items-center justify-center
+                      font-mono text-[11px] font-medium text-sky-400
+                      bg-sky-500/10 border border-sky-500/20">5</div>
+          <div class="flex-1 font-sans text-[14px] text-stone-300 tracking-wide">Gramasi Unstandart</div>
+          <div id="rv-GramasiUnstandart" class="font-mono text-[20px] font-light text-sky-400 min-w-[40px] text-right">0</div>
+          <div class="font-mono text-[9px] text-stone-600 ml-1">pcs</div>
+          <div class="reject-arr ml-2">›</div>
+        </div>
+
+        <div class="reject-row" onclick="openNumpad('Lain-lain')">
+          <div class="w-7 h-7 flex-shrink-0 rounded-lg flex items-center justify-center
+                      font-mono text-[11px] font-medium text-emerald-400
+                      bg-emerald-500/10 border border-emerald-500/20">6</div>
+          <div class="flex-1 font-sans text-[14px] text-stone-300 tracking-wide">Lain-lain</div>
+          <div id="rv-Lainlain" class="font-mono text-[20px] font-light text-emerald-400 min-w-[40px] text-right">0</div>
+          <div class="font-mono text-[9px] text-stone-600 ml-1">pcs</div>
+          <div class="reject-arr ml-2">›</div>
+        </div>
+
+      </div>
+
+      <!-- Summary strip -->
+      <div class="mt-6 pt-5 border-t border-white/[0.07]">
+        <div class="grid grid-cols-2 gap-3 mb-0">
+          <div class="bg-surface rounded-xl border border-red-500/10 p-4 text-center">
+            <div class="font-mono text-[8px] tracking-[0.2em] uppercase text-stone-500 mb-2">Total Reject</div>
+            <div id="sum-reject" class="font-mono text-[26px] font-light text-red-400">0</div>
+            <div class="font-mono text-[9px] text-stone-600 mt-1">pcs</div>
+          </div>
+          <div class="bg-surface rounded-xl border border-emerald-500/10 p-4 text-center">
+            <div class="font-mono text-[8px] tracking-[0.2em] uppercase text-stone-500 mb-2">Net Good</div>
+            <div id="sum-good-net" class="font-mono text-[26px] font-light text-emerald-400">0</div>
+            <div class="font-mono text-[9px] text-stone-600 mt-1">Good(1) − Reject</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Action buttons -->
+      <div class="grid grid-cols-2 gap-3 mt-5">
+        <button onclick="resetReject()"
+          class="font-mono text-[10px] tracking-[0.18em] uppercase py-3.5 rounded-xl
+                 border border-white/[0.07] text-stone-500
+                 hover:border-red-500/30 hover:text-red-400 transition-all">
+          ✕  Reset
+        </button>
+        <button onclick="submitReject()"
+          class="font-mono text-[10px] tracking-[0.18em] uppercase py-3.5 rounded-xl
+                 text-bg font-medium transition-all hover:opacity-85 hover:-translate-y-px active:translate-y-0"
+          style="background:linear-gradient(135deg,#c5a860,#9a7824);
+                 box-shadow:0 4px 22px rgba(197,168,96,.22);">
+          ↓  Submit Data
+        </button>
+      </div>
+    </div>
+
+    <!-- ─ RIGHT: Breakdown ─ -->
+    <div class="relative overflow-hidden bg-card rounded-2xl border border-white/[0.07] p-8">
+      <div class="watermark">B</div>
+
+      <div class="flex items-center gap-4 mb-7">
+        <div class="w-[3px] h-7 rounded-sm" style="background:linear-gradient(180deg,#c5a860,transparent)"></div>
+        <h2 class="font-serif text-[21px] font-semibold text-stone-100">Breakdown Reject</h2>
+      </div>
+
+      <!-- Progress bars per jenis -->
+      <div id="breakdown-container" class="flex flex-col gap-3.5 mb-6"></div>
+
+      <!-- Bar Chart -->
+      <div class="flex items-center gap-4 mb-4">
+        <div class="w-[3px] h-5 rounded-sm" style="background:linear-gradient(180deg,#c5a860,transparent)"></div>
+        <h3 class="font-serif text-[17px] font-semibold text-stone-100">Persentase Per Jenis</h3>
+      </div>
+      <canvas id="barChart" height="200"></canvas>
+    </div>
+
+  </div>
+
+  <!-- ══ HISTORY TABLE ══ -->
+  <div class="bg-card rounded-2xl border border-white/[0.07] p-8 fade-up-3">
+    <div class="flex items-center justify-between mb-6">
+      <div class="flex items-center gap-4">
+        <div class="w-[3px] h-7 rounded-sm" style="background:linear-gradient(180deg,#c5a860,transparent)"></div>
+        <h2 class="font-serif text-[21px] font-semibold text-stone-100">Riwayat Submit</h2>
+      </div>
+      <!-- Tombol Hapus Semua -->
+      <button onclick="clearAllHistory()"
+        class="font-mono text-[9px] tracking-[0.18em] uppercase px-4 py-2.5 rounded-xl
+               border border-red-500/20 text-red-400 bg-red-500/5
+               hover:bg-red-500/12 hover:border-red-500/35 transition-all">
+        ✕ Hapus Semua Riwayat
+      </button>
+    </div>
+    <div class="overflow-x-auto">
+      <table class="w-full">
+        <thead>
+          <tr>
+            <th class="text-left font-mono text-[9px] tracking-[0.2em] uppercase text-stone-500 pb-3 pr-3 border-b border-white/[0.06]">#</th>
+            <th class="text-left font-mono text-[9px] tracking-[0.2em] uppercase text-stone-500 pb-3 pr-3 border-b border-white/[0.06]">Waktu</th>
+            <th class="text-left font-mono text-[9px] tracking-[0.2em] uppercase text-stone-500 pb-3 pr-3 border-b border-white/[0.06]">Produksi</th>
+            <th class="text-left font-mono text-[9px] tracking-[0.2em] uppercase text-stone-500 pb-3 pr-3 border-b border-white/[0.06]">Good (1)</th>
+            <th class="text-left font-mono text-[9px] tracking-[0.2em] uppercase text-stone-500 pb-3 pr-3 border-b border-white/[0.06]">Reject</th>
+            <th class="text-left font-mono text-[9px] tracking-[0.2em] uppercase text-stone-500 pb-3 pr-3 border-b border-white/[0.06]">Net Good</th>
+            <th class="text-left font-mono text-[9px] tracking-[0.2em] uppercase text-stone-500 pb-3 pr-3 border-b border-white/[0.06]">QR</th>
+            <th class="text-left font-mono text-[9px] tracking-[0.2em] uppercase text-stone-500 pb-3 pr-3 border-b border-white/[0.06]">PR</th>
+            <th class="text-left font-mono text-[9px] tracking-[0.2em] uppercase text-stone-500 pb-3 pr-3 border-b border-white/[0.06]">Terbanyak</th>
+            <th class="text-left font-mono text-[9px] tracking-[0.2em] uppercase text-stone-500 pb-3 border-b border-white/[0.06]">Aksi</th>
+          </tr>
+        </thead>
+        <tbody id="history-body">
+          <tr>
+            <td colspan="10" class="font-mono text-[11px] text-stone-600 text-center py-10">
+              Belum ada data tersimpan
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+</div><!-- /wrapper -->
+
+<!-- ══ NUMPAD MODAL ══ -->
+<div id="numpadModal" class="numpad-overlay" onclick="numpadOutsideClick(event)">
+  <div class="numpad-card">
+
+    <div class="flex items-center justify-between mb-5">
+      <span id="numpad-title"
+        class="font-mono text-[10px] tracking-[0.24em] uppercase text-gold">
+        Input Reject
+      </span>
+      <button onclick="closeNumpad()"
+        class="font-mono text-[12px] text-stone-500 hover:text-red-400
+               px-2 py-1 rounded-lg hover:bg-red-500/10 transition-all">✕</button>
+    </div>
+
+    <div class="bg-bg border border-white/[0.08] rounded-2xl px-5 py-4 mb-1 text-right">
+      <div id="numpadDisplay"
+        class="font-mono text-[44px] font-light leading-none text-gold-lt"
+        style="letter-spacing:-1px;text-shadow:0 0 20px rgba(197,168,96,.4)">0</div>
+    </div>
+    <div class="font-mono text-[9px] text-stone-600 text-center tracking-widest mb-5">pcs</div>
+
+    <div class="grid grid-cols-3 gap-2 mb-3">
+      <button class="numBtn" onclick="numpadPress('7')">7</button>
+      <button class="numBtn" onclick="numpadPress('8')">8</button>
+      <button class="numBtn" onclick="numpadPress('9')">9</button>
+      <button class="numBtn" onclick="numpadPress('4')">4</button>
+      <button class="numBtn" onclick="numpadPress('5')">5</button>
+      <button class="numBtn" onclick="numpadPress('6')">6</button>
+      <button class="numBtn" onclick="numpadPress('1')">1</button>
+      <button class="numBtn" onclick="numpadPress('2')">2</button>
+      <button class="numBtn" onclick="numpadPress('3')">3</button>
+      <button class="numBtn col-span-2" onclick="numpadPress('0')">0</button>
+      <button class="numBtn" onclick="numpadDel()"
+        style="color:#f87171;border-color:rgba(248,113,113,.2);background:rgba(248,113,113,.06)">⌫</button>
+    </div>
+
+    <div class="grid grid-cols-2 gap-2">
+      <button onclick="numpadClear()"
+        class="font-mono text-[11px] tracking-[0.16em] uppercase py-3.5 rounded-xl
+               border border-white/[0.08] text-stone-500
+               hover:border-white/20 hover:text-stone-300 transition-all">
+        C  CLEAR
+      </button>
+      <button onclick="numpadConfirm()"
+        class="font-mono text-[11px] tracking-[0.16em] uppercase py-3.5 rounded-xl
+               font-medium text-bg transition-all hover:opacity-85"
+        style="background:linear-gradient(135deg,#c5a860,#9a7824);
+               box-shadow:0 4px 18px rgba(197,168,96,.25);">
+        ✓  OK
+      </button>
+    </div>
+
+  </div>
+</div>
+
+<!-- Toast -->
+<div class="toast" id="toast">✓ Data berhasil disimpan</div>
+
+<script src="Reject.packaging.js"></script>
+<script>
+  function tick() {
+    const n = new Date();
+    document.getElementById('clock').innerText = n.toLocaleTimeString('id-ID');
+    document.getElementById('today').innerText = n.toLocaleDateString('id-ID',{
+      weekday:'long',day:'numeric',month:'long',year:'numeric'
+    });
+  }
+  tick(); setInterval(tick, 1000);
+</script>
+</body>
+</html>
