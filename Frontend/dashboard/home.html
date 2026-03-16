@@ -33,7 +33,6 @@
   <style>
     body { background: #0a0c10; }
 
-    /* Ambient top glow */
     .ambient-glow {
       position: fixed; top: -30vh; left: 50%;
       transform: translateX(-50%);
@@ -42,24 +41,12 @@
       pointer-events: none; z-index: 0;
     }
 
-    /* Gold top shimmer on online card */
     .card-online::before {
       content: '';
       position: absolute; top: 0; left: 10%; right: 10%; height: 1px;
       background: linear-gradient(90deg, transparent, #c5a860, transparent);
     }
 
-    /* Progress glow dot */
-    .prog-dot::after {
-      content: '';
-      position: absolute; right: -2px; top: 50%;
-      transform: translateY(-50%);
-      width: 10px; height: 10px; border-radius: 50%;
-      background: #e2c97e;
-      box-shadow: 0 0 10px rgba(197,168,96,0.9);
-    }
-
-    /* Watermark */
     .watermark {
       position: absolute; bottom: -14px; right: 18px;
       font-family: 'Cormorant Garamond', serif;
@@ -75,9 +62,6 @@
     @keyframes blink {
       0%,100% { opacity:1; box-shadow: 0 0 8px #4caf7d; }
       50%      { opacity:0.4; box-shadow: 0 0 2px #4caf7d; }
-    }
-    @keyframes prog-anim {
-      from { width: 0%; }
     }
 
     .fade-up-1 { animation: fadeUp 0.7s ease both; }
@@ -95,12 +79,10 @@
       transition: width 0.9s cubic-bezier(0.4,0,0.2,1);
     }
 
-    /* Hover lift */
     .hover-lift { transition: transform 0.25s ease, border-color 0.3s ease; }
     .hover-lift:hover { transform: translateY(-2px); }
 
     select option { background: #13171f; }
-
     input[type="date"]::-webkit-calendar-picker-indicator { filter: invert(0.5); }
   </style>
 </head>
@@ -135,13 +117,12 @@
          class="relative overflow-hidden bg-card rounded-2xl border border-white/[0.07] p-8 fade-up-1">
       <div class="watermark">1</div>
 
-      <!-- Card head -->
       <div class="flex items-center justify-between mb-7">
         <div class="flex items-center gap-3.5">
           <div class="w-11 h-11 rounded-xl flex items-center justify-center text-xl
                       bg-gold/10 border border-gold/20">⚙️</div>
           <div>
-            <div class="font-serif text-[22px] font-semibold text-stone-100">Mesin Packing #1</div>
+            <div class="font-serif text-[22px] font-semibold text-stone-100">MESIN PACKING A</div>
             <div class="text-[11px] text-stone-500 tracking-wider mt-0.5">Rotary Seal Unit</div>
           </div>
         </div>
@@ -152,47 +133,54 @@
         </span>
       </div>
 
-      <!-- Stats Row 1: Total + Target -->
       <div class="grid grid-cols-2 gap-3.5 mb-3">
         <div class="hover-lift bg-surface rounded-xl border border-white/[0.07] p-5">
-          <div class="font-mono text-[9px] tracking-[0.2em] uppercase text-stone-500 mb-2.5">Total Pieces</div>
+          <div class="font-mono text-[9px] tracking-[0.2em] uppercase text-stone-500 mb-2.5">TOTAL OUTPUT MESIN</div>
           <div id="pieces1" class="font-mono text-[38px] font-light text-gold-lt leading-none tracking-tighter">0</div>
           <div class="text-[10px] text-stone-600 mt-1.5 tracking-wider">pcs terpacking</div>
         </div>
         <div class="hover-lift bg-surface rounded-xl border border-white/[0.07] p-5">
           <div class="font-mono text-[9px] tracking-[0.2em] uppercase text-stone-500 mb-2.5">Target Shift</div>
-          <div id="target1" class="font-mono text-[38px] font-light text-gold-lt leading-none tracking-tighter">0</div>
+          <div class="flex items-baseline gap-3 flex-wrap">
+            <div id="target1" class="font-mono text-[38px] font-light text-gold-lt leading-none tracking-tighter">0</div>
+            <!-- Badge produk — diupdate oleh dashboard.js -->
+            <span id="product-badge1"
+              style="display:none; font-family:'DM Mono',monospace; font-size:10px;
+                     font-weight:500; color:#c5a860; background:rgba(197,168,96,0.1);
+                     border:1px solid rgba(197,168,96,0.22); border-radius:6px;
+                     padding:2px 9px; letter-spacing:0.04em; white-space:nowrap;">
+              —
+            </span>
+          </div>
           <div class="text-[10px] text-stone-600 mt-1.5 tracking-wider">pcs</div>
           <div class="mt-3 pt-3 border-t border-white/[0.05] flex items-center gap-2">
-            <span class="font-mono text-[8px] tracking-[0.18em] uppercase text-stone-600">Est. Waktu</span>
+            <span class="font-mono text-[8px] tracking-[0.18em] uppercase text-stone-600">Loading Time</span>
             <span id="estimasi1" class="font-mono text-[13px] text-gold font-medium">—</span>
           </div>
         </div>
       </div>
-      <!-- Stats Row 2: Input Good + Input No Obj -->
       <div class="grid grid-cols-2 gap-3.5 mb-5">
         <div class="hover-lift bg-surface rounded-xl border border-emerald-500/10 p-5">
-          <div class="font-mono text-[9px] tracking-[0.2em] uppercase text-stone-500 mb-2.5">Input Good (1)</div>
+          <div class="font-mono text-[9px] tracking-[0.2em] uppercase text-stone-500 mb-2.5">OUTPUT PRODUK</div>
           <div id="inputOne1" class="font-mono text-[32px] font-light text-emerald-400 leading-none tracking-tighter">0</div>
           <div class="text-[10px] text-stone-600 mt-1.5 tracking-wider">pcs</div>
         </div>
         <div class="hover-lift bg-surface rounded-xl border border-red-500/10 p-5">
-          <div class="font-mono text-[9px] tracking-[0.2em] uppercase text-stone-500 mb-2.5">Input No Obj (0)</div>
+          <div class="font-mono text-[9px] tracking-[0.2em] uppercase text-stone-500 mb-2.5">OUTPUT LOSS PRODUK</div>
           <div id="inputZero1" class="font-mono text-[32px] font-light text-red-400 leading-none tracking-tighter">0</div>
           <div class="text-[10px] text-stone-600 mt-1.5 tracking-wider">pcs</div>
         </div>
       </div>
 
-      <!-- Time metrics 4 kotak -->
       <div class="grid grid-cols-2 gap-3 mb-3">
         <div class="bg-surface rounded-xl border border-white/[0.07] p-3.5 text-center">
           <div class="font-mono text-[8px] tracking-[0.2em] uppercase text-stone-500 mb-2">Setup Time</div>
           <div id="setupTime1" class="font-mono text-[15px] font-medium tracking-wide text-yellow-400/90">00:00:00</div>
         </div>
         <div class="bg-surface rounded-xl border border-amber-500/20 p-3.5 text-center">
-          <div class="font-mono text-[8px] tracking-[0.2em] uppercase text-stone-500 mb-1">Lost Time</div>
-          <div id="lostTime1" class="font-mono text-[15px] font-medium tracking-wide text-amber-400/90">00:00:00</div>
-          <div id="lostTimeSec1" class="font-mono text-[11px] text-amber-400/55 mt-1 tracking-wider">0.000 s</div>
+          <div class="font-mono text-[8px] tracking-[0.2em] uppercase text-stone-500 mb-1">Minor Breakdown</div>
+          <div id="minorBreakdown1" class="font-mono text-[15px] font-medium tracking-wide text-amber-400/90">00:00:00</div>
+          <div id="minorBreakdownSec1" class="font-mono text-[11px] text-amber-400/55 mt-1 tracking-wider">0.000 s</div>
         </div>
       </div>
       <div class="grid grid-cols-2 gap-3 mb-6">
@@ -206,7 +194,7 @@
         </div>
       </div>
 
-      <!-- Operator -->
+      <!-- Footer mesin 1: operator + shift badge dinamis -->
       <div class="flex items-center justify-between pt-4 border-t border-white/[0.07]">
         <div class="flex items-center gap-3">
           <div class="w-8 h-8 rounded-full bg-gold/10 border border-gold/20 flex items-center justify-center text-sm">👤</div>
@@ -215,7 +203,9 @@
             <div class="text-[10px] text-stone-500 tracking-wide">Machine Operator</div>
           </div>
         </div>
-        <div class="font-mono text-[9px] tracking-[0.12em] text-gold bg-gold/10 border border-gold/20 px-3 py-1.5 rounded-full">
+        <!-- Shift badge — diupdate oleh dashboard.js via id="shift-badge1" -->
+        <div id="shift-badge1"
+          class="font-mono text-[9px] tracking-[0.12em] text-gold bg-gold/10 border border-gold/20 px-3 py-1.5 rounded-full">
           Shift 1 · 06:00–14:00
         </div>
       </div>
@@ -231,7 +221,7 @@
           <div class="w-11 h-11 rounded-xl flex items-center justify-center text-xl
                       bg-gold/10 border border-gold/20">⚙️</div>
           <div>
-            <div class="font-serif text-[22px] font-semibold text-stone-100">Mesin Packing #2</div>
+            <div class="font-serif text-[22px] font-semibold text-stone-100">MESIN PACKING B</div>
             <div class="text-[11px] text-stone-500 tracking-wider mt-0.5">Rotary Seal Unit</div>
           </div>
         </div>
@@ -242,47 +232,53 @@
         </span>
       </div>
 
-      <!-- Stats Row 1: Total + Target -->
       <div class="grid grid-cols-2 gap-3.5 mb-3">
         <div class="hover-lift bg-surface rounded-xl border border-white/[0.07] p-5">
-          <div class="font-mono text-[9px] tracking-[0.2em] uppercase text-stone-500 mb-2.5">Total Pieces</div>
+          <div class="font-mono text-[9px] tracking-[0.2em] uppercase text-stone-500 mb-2.5">TOTAL OUTPUT MESIN</div>
           <div id="pieces2" class="font-mono text-[38px] font-light text-gold-lt leading-none tracking-tighter">0</div>
           <div class="text-[10px] text-stone-600 mt-1.5 tracking-wider">pcs terpacking</div>
         </div>
         <div class="hover-lift bg-surface rounded-xl border border-white/[0.07] p-5">
           <div class="font-mono text-[9px] tracking-[0.2em] uppercase text-stone-500 mb-2.5">Target Shift</div>
-          <div id="target2" class="font-mono text-[38px] font-light text-gold-lt leading-none tracking-tighter">0</div>
+          <div class="flex items-baseline gap-3 flex-wrap">
+            <div id="target2" class="font-mono text-[38px] font-light text-gold-lt leading-none tracking-tighter">0</div>
+            <span id="product-badge2"
+              style="display:none; font-family:'DM Mono',monospace; font-size:10px;
+                     font-weight:500; color:#c5a860; background:rgba(197,168,96,0.1);
+                     border:1px solid rgba(197,168,96,0.22); border-radius:6px;
+                     padding:2px 9px; letter-spacing:0.04em; white-space:nowrap;">
+              —
+            </span>
+          </div>
           <div class="text-[10px] text-stone-600 mt-1.5 tracking-wider">pcs</div>
           <div class="mt-3 pt-3 border-t border-white/[0.05] flex items-center gap-2">
-            <span class="font-mono text-[8px] tracking-[0.18em] uppercase text-stone-600">Est. Waktu</span>
+            <span class="font-mono text-[8px] tracking-[0.18em] uppercase text-stone-600">Loading Time</span>
             <span id="estimasi2" class="font-mono text-[13px] text-gold font-medium">—</span>
           </div>
         </div>
       </div>
-      <!-- Stats Row 2: Input Good + Input No Obj -->
       <div class="grid grid-cols-2 gap-3.5 mb-5">
         <div class="hover-lift bg-surface rounded-xl border border-emerald-500/10 p-5">
-          <div class="font-mono text-[9px] tracking-[0.2em] uppercase text-stone-500 mb-2.5">Input Good (1)</div>
+          <div class="font-mono text-[9px] tracking-[0.2em] uppercase text-stone-500 mb-2.5">OUTPUT PRODUK</div>
           <div id="inputOne2" class="font-mono text-[32px] font-light text-emerald-400 leading-none tracking-tighter">0</div>
           <div class="text-[10px] text-stone-600 mt-1.5 tracking-wider">pcs</div>
         </div>
         <div class="hover-lift bg-surface rounded-xl border border-red-500/10 p-5">
-          <div class="font-mono text-[9px] tracking-[0.2em] uppercase text-stone-500 mb-2.5">Input No Obj (0)</div>
+          <div class="font-mono text-[9px] tracking-[0.2em] uppercase text-stone-500 mb-2.5">OUTPUT LOSS PRODUK</div>
           <div id="inputZero2" class="font-mono text-[32px] font-light text-red-400 leading-none tracking-tighter">0</div>
           <div class="text-[10px] text-stone-600 mt-1.5 tracking-wider">pcs</div>
         </div>
       </div>
 
-      <!-- Time metrics 4 kotak -->
       <div class="grid grid-cols-2 gap-3 mb-3">
         <div class="bg-surface rounded-xl border border-white/[0.07] p-3.5 text-center">
           <div class="font-mono text-[8px] tracking-[0.2em] uppercase text-stone-500 mb-2">Setup Time</div>
           <div id="setupTime2" class="font-mono text-[15px] font-medium tracking-wide text-yellow-400/90">00:00:00</div>
         </div>
         <div class="bg-surface rounded-xl border border-amber-500/20 p-3.5 text-center">
-          <div class="font-mono text-[8px] tracking-[0.2em] uppercase text-stone-500 mb-1">Lost Time</div>
-          <div id="lostTime2" class="font-mono text-[15px] font-medium tracking-wide text-amber-400/90">00:00:00</div>
-          <div id="lostTimeSec2" class="font-mono text-[11px] text-amber-400/55 mt-1 tracking-wider">0.000 s</div>
+          <div class="font-mono text-[8px] tracking-[0.2em] uppercase text-stone-500 mb-1">Minor Breakdown</div>
+          <div id="minorBreakdown2" class="font-mono text-[15px] font-medium tracking-wide text-amber-400/90">00:00:00</div>
+          <div id="minorBreakdownSec2" class="font-mono text-[11px] text-amber-400/55 mt-1 tracking-wider">0.000 s</div>
         </div>
       </div>
       <div class="grid grid-cols-2 gap-3 mb-6">
@@ -296,6 +292,7 @@
         </div>
       </div>
 
+      <!-- Footer mesin 2: operator + shift badge dinamis -->
       <div class="flex items-center justify-between pt-4 border-t border-white/[0.07]">
         <div class="flex items-center gap-3">
           <div class="w-8 h-8 rounded-full bg-gold/10 border border-gold/20 flex items-center justify-center text-sm">👤</div>
@@ -304,7 +301,8 @@
             <div class="text-[10px] text-stone-500 tracking-wide">Machine Operator</div>
           </div>
         </div>
-        <div class="font-mono text-[9px] tracking-[0.12em] text-gold bg-gold/10 border border-gold/20 px-3 py-1.5 rounded-full">
+        <div id="shift-badge2"
+          class="font-mono text-[9px] tracking-[0.12em] text-gold bg-gold/10 border border-gold/20 px-3 py-1.5 rounded-full">
           Shift 1 · 06:00–14:00
         </div>
       </div>
@@ -318,7 +316,7 @@
       <h2 class="font-serif text-[21px] font-semibold text-stone-100">Ringkasan Produksi Harian</h2>
     </div>
 
-    <div class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3.5">
+    <div class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3.5 mb-3.5">
       <div class="hover-lift bg-surface rounded-xl border border-white/[0.07] p-6 text-center">
         <div class="font-mono text-[8px] tracking-[0.22em] uppercase text-stone-500 mb-3">Total Produksi</div>
         <div id="total-production" class="font-mono text-[32px] font-light leading-none text-emerald-400">0</div>
@@ -345,7 +343,40 @@
       </div>
     </div>
 
-    <div class="flex justify-between items-center pt-5 mt-6 border-t border-white/[0.07]">
+    <div class="grid grid-cols-2 md:grid-cols-4 gap-3.5">
+      <div class="hover-lift bg-surface rounded-xl border border-amber-500/20 p-6 text-center">
+        <div class="font-mono text-[8px] tracking-[0.22em] uppercase text-stone-500 mb-1">Rata-rata Minor Breakdown</div>
+        <div class="font-mono text-[9px] text-stone-600 tracking-wider mb-3">(Mesin A + Mesin B) ÷ 2</div>
+        <div id="total-minor-breakdown" class="font-mono text-[28px] font-light leading-none text-amber-400">00:00:00</div>
+      </div>
+      <div class="hover-lift bg-surface rounded-xl border border-red-500/20 p-6 text-center">
+        <div class="font-mono text-[8px] tracking-[0.22em] uppercase text-stone-500 mb-1">Rata-rata Downtime</div>
+        <div class="font-mono text-[9px] text-stone-600 tracking-wider mb-3">(Mesin A + Mesin B) ÷ 2</div>
+        <div id="total-downtime" class="font-mono text-[28px] font-light leading-none text-red-400">00:00:00</div>
+      </div>
+      <div class="hover-lift bg-surface rounded-xl border border-red-500/20 p-6 text-center">
+        <div class="font-mono text-[8px] tracking-[0.22em] uppercase text-stone-500 mb-1">Rata-rata Loading Time</div>
+        <div class="font-mono text-[9px] text-stone-600 tracking-wider mb-3">(Mesin A + Mesin B) ÷ 2</div>
+        <div id="total-loading-time" class="font-mono text-[28px] font-light leading-none text-green-400">00:00:00</div>
+      </div>
+      <div class="hover-lift bg-surface rounded-xl border border-red-500/20 p-6 text-center">
+        <div class="font-mono text-[8px] tracking-[0.22em] uppercase text-stone-500 mb-1">Rata-rata Setup Time</div>
+        <div class="font-mono text-[9px] text-stone-600 tracking-wider mb-3">(Mesin A + Mesin B) ÷ 2</div>
+        <div id="total-setup-time" class="font-mono text-[28px] font-light leading-none text-blue-400">00:00:00</div>
+      </div>
+      <div class="hover-lift bg-surface rounded-xl border border-red-500/20 p-6 text-center">
+        <div class="font-mono text-[8px] tracking-[0.22em] uppercase text-stone-500 mb-1">Operation Time</div>
+        <div class="font-mono text-[9px] text-stone-600 tracking-wider mb-3">(Mesin A + Mesin B) ÷ 2</div>
+        <div id="total-operating-time" class="font-mono text-[28px] font-light leading-none text-orange-400">00:00:00</div>
+      </div>
+      <div class="hover-lift bg-surface rounded-xl border border-red-500/20 p-6 text-center">
+        <div class="font-mono text-[8px] tracking-[0.22em] uppercase text-stone-500 mb-1">Net Operation Time</div>
+        <div class="font-mono text-[9px] text-stone-600 tracking-wider mb-3">(Mesin A + Mesin B) ÷ 2</div>
+        <div id="total-net-operating-time" class="font-mono text-[28px] font-light leading-none text-white-400">00:00:00</div>
+      </div>
+    </div>
+
+    <div class="flex justify-between items-center pt-5 mt-4 border-t border-white/[0.07]">
       <div class="font-mono text-[10px] tracking-widest text-stone-500">
         MQTT — <span id="mqtt-status" class="text-gold">Connecting...</span>
       </div>
@@ -356,7 +387,7 @@
   </div>
 
   <!-- ══ OEE GAUGES ══ -->
-  <div class="bg-card rounded-2xl border border-white/[0.07] p-8 mb-5 fade-up-4">
+  <div class="bg-card rounded-2xl border border-white/[0.07] p-8 fade-up-4">
     <div class="flex items-center justify-between mb-2">
       <div class="flex items-center gap-4">
         <div class="w-[3px] h-7 rounded-sm" style="background: linear-gradient(180deg,#c5a860,transparent)"></div>
@@ -371,8 +402,6 @@
     </p>
 
     <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
-
-      <!-- AR -->
       <div class="bg-surface rounded-2xl border border-white/[0.07] p-6 flex flex-col items-center">
         <div class="font-mono text-[9px] tracking-[0.22em] uppercase text-stone-500 mb-1">Availability Rate</div>
         <div class="font-mono text-[9px] text-stone-600 tracking-wider mb-4">AR = Runtime / Total Time</div>
@@ -383,7 +412,6 @@
         <div id="ar-label" class="font-mono text-[9px] tracking-[0.15em] uppercase mt-2 text-stone-500">—</div>
       </div>
 
-      <!-- PR -->
       <div class="bg-surface rounded-2xl border border-white/[0.07] p-6 flex flex-col items-center">
         <div class="font-mono text-[9px] tracking-[0.22em] uppercase text-stone-500 mb-1">Performance Rate</div>
         <div class="font-mono text-[9px] text-stone-600 tracking-wider mb-4">PR = Actual / Target Output</div>
@@ -394,20 +422,17 @@
         <div id="pr-label" class="font-mono text-[9px] tracking-[0.15em] uppercase mt-2 text-stone-500">—</div>
       </div>
 
-      <!-- QR -->
       <div class="bg-surface rounded-2xl border border-white/[0.07] p-6 flex flex-col items-center">
         <div class="font-mono text-[9px] tracking-[0.22em] uppercase text-stone-500 mb-1">Quality Rate</div>
-        <div class="font-mono text-[9px] text-stone-600 tracking-wider mb-4">QR = Good / Total Pieces</div>
+        <div class="font-mono text-[9px] text-stone-600 tracking-wider mb-4">QR = Good / Total Output Mesin</div>
         <div class="relative w-full" style="max-width:240px">
           <canvas id="gauge-qr" width="240" height="140"></canvas>
         </div>
         <div id="qr-value" class="font-mono text-[38px] font-light leading-none mt-1" style="color:#a78bfa">0%</div>
         <div id="qr-label" class="font-mono text-[9px] tracking-[0.15em] uppercase mt-2 text-stone-500">—</div>
       </div>
-
     </div>
 
-    <!-- OEE Total -->
     <div class="mt-6 pt-6 border-t border-white/[0.07] flex items-center justify-between">
       <div class="flex items-center gap-3">
         <div class="font-mono text-[9px] tracking-[0.2em] uppercase text-stone-500">OEE Score</div>
@@ -422,54 +447,10 @@
     </div>
   </div>
 
-  <!-- ══ DOWNLOAD ══ -->
-  <div class="bg-card rounded-2xl border border-white/[0.07] p-8 fade-up-4">
-    <div class="flex items-center gap-4 mb-7">
-      <div class="w-[3px] h-7 rounded-sm" style="background: linear-gradient(180deg,#c5a860,transparent)"></div>
-      <h2 class="font-serif text-[21px] font-semibold text-stone-100">Download Laporan</h2>
-    </div>
-
-    <div class="grid grid-cols-1 md:grid-cols-3 gap-4 items-end mb-5">
-      <div>
-        <label class="block font-mono text-[9px] tracking-[0.2em] uppercase text-stone-500 mb-2">Tanggal</label>
-        <input type="date" id="download-date"
-               class="w-full bg-surface border border-white/[0.07] rounded-xl px-4 py-3
-                      text-stone-200 font-sans text-[13px] outline-none
-                      focus:border-gold/40 transition-colors">
-      </div>
-      <div>
-        <label class="block font-mono text-[9px] tracking-[0.2em] uppercase text-stone-500 mb-2">Shift</label>
-        <select id="download-shift"
-                class="w-full bg-surface border border-white/[0.07] rounded-xl px-4 py-3
-                       text-stone-200 font-sans text-[13px] outline-none
-                       focus:border-gold/40 transition-colors appearance-none">
-          <option value="1">Shift 1 — Pagi 06:00–14:00</option>
-          <option value="2">Shift 2 — Siang 14:00–22:00</option>
-          <option value="3">Shift 3 — Malam 22:00–06:00</option>
-        </select>
-      </div>
-      <div>
-        <button onclick="downloadExcel()"
-                class="w-full font-mono text-[10px] tracking-[0.18em] uppercase font-medium
-                       text-bg px-6 py-3.5 rounded-xl
-                       transition-all duration-200 hover:opacity-85 hover:-translate-y-px active:translate-y-0"
-                style="background: linear-gradient(135deg,#c5a860,#9a7824); box-shadow: 0 4px 22px rgba(197,168,96,0.22);">
-          ↓ Export Excel
-        </button>
-      </div>
-    </div>
-
-    <div class="flex gap-3 items-start bg-gold/[0.04] border border-gold/10 rounded-xl p-4 text-[12px] text-stone-500 leading-relaxed">
-      <span class="text-gold text-[8px] mt-1 flex-shrink-0">◆</span>
-      Data yang diunduh mencakup total pieces terpacking, target produksi, setup time, lost time, dan downtime untuk shift yang dipilih.
-    </div>
-  </div>
-
 </div><!-- /wrapper -->
 
 <script src="dashboard.js"></script>
 <script>
-  // Live clock
   function tick() {
     const n = new Date();
     document.getElementById('clock').innerText = n.toLocaleTimeString('id-ID');
@@ -477,11 +458,6 @@
       n.toLocaleDateString('id-ID', { weekday:'long', day:'numeric', month:'long', year:'numeric' });
   }
   tick(); setInterval(tick, 1000);
-
-  // Default date
-  const n = new Date();
-  document.getElementById('download-date').value =
-    `${n.getFullYear()}-${String(n.getMonth()+1).padStart(2,'0')}-${String(n.getDate()).padStart(2,'0')}`;
 </script>
 </body>
 </html>

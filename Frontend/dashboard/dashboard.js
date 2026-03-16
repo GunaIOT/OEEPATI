@@ -1,29 +1,183 @@
-const MS_PER_PCS = 2222;
+// dashboard.js — OEE Dashboard
+// ════════════════════════════════════════════════════════
+// LOGIKA DATABASE (FIXED v3 — BENAR):
+//
+//  URUTAN KERJA GANTI SHIFT:
+//    1. Restart ESP32  → finalize row lama (PUT) → INSERT row BARU (id=2) langsung
+//    2. Reset          → clear tampilan/lokal SAJA, dbSessionId tetap id=2
+//    3. Isi shift/produk → Simpan Setup → UPDATE id=2 dengan shift & produk
+//
+//  ATURAN INSERT/UPDATE:
+//    - INSERT terjadi HANYA di handleRestarted() → dipicu btnRestartESP
+//    - UPDATE terjadi di handler setup-info → dipicu btnSaveSetup
+//    - Reset TIDAK memicu INSERT apapun, dbSessionId tidak diubah
+//
+//  FIX v3 vs v2:
+//    - handleRestarted() sekarang langsung INSERT row baru setelah finalize
+//    - awaitingNewSetup dihapus — tidak perlu lagi karena INSERT terjadi di restart
+//    - Handler setup-info hanya UPDATE (bukan INSERT), kecuali sesi belum ada sama sekali
+//    - Reset tidak menyentuh dbSessionId sama sekali
+// ════════════════════════════════════════════════════════
 
-const LOST_LIMIT = 3 * 60 * 1000; // 3 menit
+const MS_PER_PCS         = 2069;
+const MS_PER_PCS_PARALEL = 1034;
+const POPUP_LIMIT        = 3  * 60 * 1000;
+const BREAKDOWN_LIMIT    = 10 * 60 * 1000;
+
+// ════════════════════════════════════════════════════════
+// SETUP INFO — shift & produk dari masing-masing control
+// ════════════════════════════════════════════════════════
+let setupInfo1 = { shift: 1, product: '-', date: new Date().toISOString().split('T')[0] };
+let setupInfo2 = { shift: 1, product: '-', date: new Date().toISOString().split('T')[0] };
+
+const SHIFT_LABELS = {
+  1: 'Shift 1 · 06:00–14:00',
+  2: 'Shift 2 · 14:00–22:00',
+  3: 'Shift 3 · 22:00–06:00',
+};
+
+function renderSetupInfo() {
+  const shift1 = setupInfo1.shift   || 1;
+  const shift2 = setupInfo2.shift   || 1;
+  const prod1  = setupInfo1.product || '-';
+  const prod2  = setupInfo2.product || '-';
+  const date1  = setupInfo1.date    || '-';
+
+  const badge1 = el('shift-badge1');
+  const badge2 = el('shift-badge2');
+  if (badge1) badge1.innerText = SHIFT_LABELS[shift1] || `Shift ${shift1}`;
+  if (badge2) badge2.innerText = SHIFT_LABELS[shift2] || `Shift ${shift2}`;
+
+  const pb1 = el('product-badge1');
+  const pb2 = el('product-badge2');
+  if (pb1) { pb1.innerText = prod1; pb1.style.display = (prod1 && prod1 !== '-') ? 'inline-block' : 'none'; }
+  if (pb2) { pb2.innerText = prod2; pb2.style.display = (prod2 && prod2 !== '-') ? 'inline-block' : 'none'; }
+
+  const elShift = el('dash-shift');
+  const elDate  = el('dash-date');
+  const elProd  = el('dash-product');
+  if (elShift) elShift.innerText = SHIFT_LABELS[shift1] || `Shift ${shift1}`;
+  if (elDate)  elDate.innerText  = date1;
+  if (elProd)  elProd.innerText  = prod1;
+}
+
+// ════════════════════════════════════════════════════════
+// PERSIST STATE — localStorage untuk dashboard
+// ════════════════════════════════════════════════════════
+const STORAGE_KEY_DASH = 'oee_dashboard_state';
+
+function saveDashState() {
+  const snap = {
+    state1: {
+      inputOne:            state1.inputOne,
+      inputZero:           state1.inputZero,
+      totalTarget:         state1.totalTarget,
+      setupTime:           state1.setupTime,
+      minorBreakdownAcc:   state1.minorBreakdownAcc,
+      minorBreakdownWatch: state1.minorBreakdownWatch + (state1.watchStart !== null ? Date.now() - state1.watchStart : 0),
+      downtimeAcc:         state1.downtimeAcc,
+      runtime:             state1.runtime,
+      online:              state1.online,
+      sensorEnabled:       sensor1Enabled,
+    },
+    state2: {
+      inputOne:            state2.inputOne,
+      inputZero:           state2.inputZero,
+      totalTarget:         state2.totalTarget,
+      setupTime:           state2.setupTime,
+      minorBreakdownAcc:   state2.minorBreakdownAcc,
+      minorBreakdownWatch: state2.minorBreakdownWatch + (state2.watchStart !== null ? Date.now() - state2.watchStart : 0),
+      downtimeAcc:         state2.downtimeAcc,
+      runtime:             state2.runtime,
+      online:              state2.online,
+      sensorEnabled:       sensor2Enabled,
+    },
+    setupInfo1,
+    setupInfo2,
+    totalRejectFromPackaging,
+    savedAt: Date.now(),
+  };
+  try { localStorage.setItem(STORAGE_KEY_DASH, JSON.stringify(snap)); } catch(e) {}
+}
+
+function loadDashState() {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY_DASH);
+    if (!raw) return;
+    const snap = JSON.parse(raw);
+    if (snap.state1) {
+      Object.assign(state1, {
+        inputOne:            snap.state1.inputOne            || 0,
+        inputZero:           snap.state1.inputZero           || 0,
+        totalTarget:         snap.state1.totalTarget         || 0,
+        setupTime:           snap.state1.setupTime           || 0,
+        minorBreakdownAcc:   snap.state1.minorBreakdownAcc   || 0,
+        minorBreakdownWatch: snap.state1.minorBreakdownWatch || 0,
+        downtimeAcc:         snap.state1.downtimeAcc         || 0,
+        runtime:             snap.state1.runtime             || 0,
+        online:              snap.state1.online              || false,
+      });
+      sensor1Enabled = snap.state1.sensorEnabled || false;
+    }
+    if (snap.state2) {
+      Object.assign(state2, {
+        inputOne:            snap.state2.inputOne            || 0,
+        inputZero:           snap.state2.inputZero           || 0,
+        totalTarget:         snap.state2.totalTarget         || 0,
+        setupTime:           snap.state2.setupTime           || 0,
+        minorBreakdownAcc:   snap.state2.minorBreakdownAcc   || 0,
+        minorBreakdownWatch: snap.state2.minorBreakdownWatch || 0,
+        downtimeAcc:         snap.state2.downtimeAcc         || 0,
+        runtime:             snap.state2.runtime             || 0,
+        online:              snap.state2.online              || false,
+      });
+      sensor2Enabled = snap.state2.sensorEnabled || false;
+    }
+    if (snap.setupInfo1) setupInfo1 = snap.setupInfo1;
+    if (snap.setupInfo2) setupInfo2 = snap.setupInfo2;
+    totalRejectFromPackaging = snap.totalRejectFromPackaging || 0;
+    console.log('[Dashboard] State loaded');
+  } catch(e) { console.warn('[Dashboard] Gagal load state:', e); }
+}
+
+function clearDashState1() {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY_DASH);
+    if (!raw) return;
+    const snap = JSON.parse(raw);
+    snap.state1 = null;
+    snap.totalRejectFromPackaging = 0;
+    localStorage.setItem(STORAGE_KEY_DASH, JSON.stringify(snap));
+  } catch(e) {}
+}
+
+function clearDashState2() {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY_DASH);
+    if (!raw) return;
+    const snap = JSON.parse(raw);
+    snap.state2 = null;
+    snap.totalRejectFromPackaging = 0;
+    localStorage.setItem(STORAGE_KEY_DASH, JSON.stringify(snap));
+  } catch(e) {}
+}
 
 function makeState() {
   return {
-    inputOne:    0,
-    inputZero:   0,
-    totalTarget: 0,
-    setupTime:   0,
-    lostTimeAcc: 0,   // lost time final (sesi < 3 mnt yang sudah selesai)
-    downtimeAcc: 0,   // downtime final (sudah di-submit)
-    runtime:     0,
-    online:      false,
-    // ── stopwatch ──
-    lostWatch:   0,    // ms terakumulasi di stopwatch ini
-    watchStart:  null, // timestamp resume terakhir (null = pause)
-    inDowntime:  false,// sudah >= 3 mnt?
-    _liveTimer:  null,
+    inputOne: 0, inputZero: 0, totalTarget: 0, setupTime: 0,
+    minorBreakdownAcc: 0, downtimeAcc: 0, runtime: 0, online: false,
+    minorBreakdownWatch: 0, watchStart: null, inDowntime: false, _liveTimer: null,
   };
 }
 const state1 = makeState();
 const state2 = makeState();
 
-// Total reject dari halaman Reject Packaging (dikirim via MQTT)
+let sensor1Enabled           = false;
+let sensor2Enabled           = false;
 let totalRejectFromPackaging = 0;
+
+// Load state sebelum apapun dirender
+loadDashState();
 
 // ── Helper: ms → HH:MM:SS ──────────────────────────────────
 function formatTime(ms) {
@@ -35,7 +189,6 @@ function formatTime(ms) {
   return [h, m, sc].map(v => String(v).padStart(2, '0')).join(':');
 }
 
-// ── Helper: ms → estimasi "Xj Ym Zd" ──────────────────────
 function formatEstimasi(ms) {
   const s = Math.floor(ms / 1000);
   const h = Math.floor(s / 3600);
@@ -46,181 +199,131 @@ function formatEstimasi(ms) {
   return `${sc}d`;
 }
 
-// ── Helper: get element ────────────────────────────────────
 const el = id => document.getElementById(id);
 
-// ── Stopwatch tracker per mesin ────────────────────────────
-// Konsep: stopwatch pause/resume
-//   count=0 → resume (watchStart = now)
-//   count=1 → pause  (lostWatch += elapsed, watchStart = null)
-//
-// Display live dihandle oleh _liveTimer tiap 500ms
-// updateDisplay1/2 hanya menulis saat stopwatch pause
-
 function getWatchTotal(st) {
-  if (st.watchStart === null) return st.lostWatch;
-  return st.lostWatch + (Date.now() - st.watchStart);
+  if (st.watchStart === null) return st.minorBreakdownWatch;
+  return st.minorBreakdownWatch + (Date.now() - st.watchStart);
 }
 
 function startZeroTrack(st, num) {
-  if (st.watchStart !== null) return; // sudah running, abaikan
-
+  if (st.watchStart !== null) return;
   st.watchStart = Date.now();
-
   clearInterval(st._liveTimer);
   st._liveTimer = setInterval(() => {
-    const total  = getWatchTotal(st);
-    const lostEl = el('lostTime' + num);
+    const total  = Date.now() - st.watchStart;
+    const lostEl = el('minorBreakdown' + num);
     const dtEl   = el('downtime' + num);
-
     if (!st.inDowntime) {
-      if (total < LOST_LIMIT) {
-        // Fase 1: tampil lostTimeAcc (sesi sebelumnya) + sesi ini
-        if (lostEl) lostEl.innerText = formatTime(st.lostTimeAcc + total);
-      } else {
-        // Masuk downtime — bekukan lostTime di lostTimeAcc
-        st.inDowntime = true;
-        if (lostEl) lostEl.innerText = formatTime(st.lostTimeAcc);
-      }
+      if (lostEl) lostEl.innerText = formatTime(st.minorBreakdownAcc + total);
+      if (dtEl)   dtEl.innerText   = formatTime(st.downtimeAcc);
+    } else {
+      if (lostEl) lostEl.innerText = formatTime(st.minorBreakdownAcc);
+      if (dtEl)   dtEl.innerText   = formatTime(st.downtimeAcc + total);
     }
-
-    // Downtime selalu update saat inDowntime (termasuk lostWatch yang sedang jalan)
-    if (st.inDowntime) {
-      if (dtEl) dtEl.innerText = formatTime(st.downtimeAcc + total);
-    }
-
-    // Juga update downtime display meski belum inDowntime (agar tidak tertinggal)
-    if (!st.inDowntime && dtEl) dtEl.innerText = formatTime(st.downtimeAcc);
   }, 500);
 }
 
 function stopZeroTrack(st, num) {
-  if (st.watchStart === null) return; // sudah pause
-
-  st.lostWatch += Date.now() - st.watchStart;
-  st.watchStart  = null;
-
+  if (st.watchStart === null) return;
   clearInterval(st._liveTimer);
   st._liveTimer = null;
-
-  // Commit ke bucket yang tepat
-  if (!st.inDowntime) {
-    // Sesi < 3 menit → masuk Lost Time, reset lostWatch
-    st.lostTimeAcc += st.lostWatch;
-    st.lostWatch    = 0;
-    console.log(`[M${num}] LostTime commit: ${(st.lostTimeAcc/1000).toFixed(1)}s total`);
-  } else {
-    // >= 3 menit — downtime di-commit saat user submit manual
-    // lostWatch tetap agar bisa di-commit nanti
-    console.log(`[M${num}] Downtime session paused: lostWatch=${(st.lostWatch/1000).toFixed(1)}s`);
-  }
+  st.watchStart = null;
+  st.inDowntime = false;
 }
 
-// ── Update estimasi waktu dari target ──────────────────────
 function updateEstimasi(machineNum, targetPcs) {
   const e = el('estimasi' + machineNum);
   if (!e) return;
   e.innerText = targetPcs > 0 ? formatEstimasi(targetPcs * MS_PER_PCS) : '—';
 }
 
-// ── Update tampilan Mesin 1 ────────────────────────────────
 function updateDisplay1() {
   const totalPieces = state1.inputOne + state1.inputZero;
-
-  if (el('pieces1'))           el('pieces1').innerText           = totalPieces;
-  if (el('inputOne1'))         el('inputOne1').innerText         = state1.inputOne;
-  if (el('inputZero1'))        el('inputZero1').innerText        = state1.inputZero;
-  if (el('target1'))           el('target1').innerText           = state1.totalTarget;
-  if (el('setupTime1'))        el('setupTime1').innerText        = formatTime(state1.setupTime);
-  // Downtime selalu update
+  if (el('pieces1'))    el('pieces1').innerText    = totalPieces;
+  if (el('inputOne1'))  el('inputOne1').innerText  = state1.inputOne;
+  if (el('inputZero1')) el('inputZero1').innerText = state1.inputZero;
+  if (el('target1'))    el('target1').innerText    = state1.totalTarget;
+  if (el('setupTime1')) el('setupTime1').innerText = formatTime(state1.setupTime);
   if (el('downtime1'))  el('downtime1').innerText  = formatTime(state1.downtimeAcc);
-  // lostTime: hanya update saat stopwatch pause
   if (state1.watchStart === null) {
-    // lostWatch = 0 setelah commit, jadi ini = lostTimeAcc
-    const lostTotal1 = state1.lostTimeAcc + state1.lostWatch;
-    if (el('lostTime1'))    el('lostTime1').innerText    = formatTime(lostTotal1);
-    if (el('lostTimeSec1')) el('lostTimeSec1').innerText = (lostTotal1 / 1000).toFixed(3) + ' s';
+    const mb1 = state1.minorBreakdownAcc + state1.minorBreakdownWatch;
+    if (el('minorBreakdown1'))    el('minorBreakdown1').innerText    = formatTime(mb1);
+    if (el('minorBreakdownSec1')) el('minorBreakdownSec1').innerText = (mb1 / 1000).toFixed(3) + ' s';
   }
-  if (el('runtime1'))     el('runtime1').innerText     = formatTime(state1.runtime);
-
+  if (el('runtime1')) el('runtime1').innerText = formatTime(state1.runtime);
   updateEstimasi(1, state1.totalTarget);
   updateSummary();
   updateOEE();
   updateTimestamp();
+  saveDashState();
 }
 
 function updateDisplay2() {
   const totalPieces = state2.inputOne + state2.inputZero;
-
-  if (el('pieces2'))           el('pieces2').innerText           = totalPieces;
-  if (el('inputOne2'))         el('inputOne2').innerText         = state2.inputOne;
-  if (el('inputZero2'))        el('inputZero2').innerText        = state2.inputZero;
-  if (el('target2'))           el('target2').innerText           = state2.totalTarget;
-  if (el('setupTime2'))        el('setupTime2').innerText        = formatTime(state2.setupTime);
+  if (el('pieces2'))    el('pieces2').innerText    = totalPieces;
+  if (el('inputOne2'))  el('inputOne2').innerText  = state2.inputOne;
+  if (el('inputZero2')) el('inputZero2').innerText = state2.inputZero;
+  if (el('target2'))    el('target2').innerText    = state2.totalTarget;
+  if (el('setupTime2')) el('setupTime2').innerText = formatTime(state2.setupTime);
   if (el('downtime2'))  el('downtime2').innerText  = formatTime(state2.downtimeAcc);
   if (state2.watchStart === null) {
-    const lostTotal2 = state2.lostTimeAcc + state2.lostWatch;
-    if (el('lostTime2'))    el('lostTime2').innerText    = formatTime(lostTotal2);
-    if (el('lostTimeSec2')) el('lostTimeSec2').innerText = (lostTotal2 / 1000).toFixed(3) + ' s';
+    const mb2 = state2.minorBreakdownAcc + state2.minorBreakdownWatch;
+    if (el('minorBreakdown2'))    el('minorBreakdown2').innerText    = formatTime(mb2);
+    if (el('minorBreakdownSec2')) el('minorBreakdownSec2').innerText = (mb2 / 1000).toFixed(3) + ' s';
   }
-  if (el('runtime2'))     el('runtime2').innerText     = formatTime(state2.runtime);
-
+  if (el('runtime2')) el('runtime2').innerText = formatTime(state2.runtime);
   updateEstimasi(2, state2.totalTarget);
   updateSummary();
   updateOEE();
   updateTimestamp();
+  saveDashState();
 }
 
 function updateSummary() {
-  const total1 = state1.inputOne + state1.inputZero;
-  const total2 = state2.inputOne + state2.inputZero;
+  const total1      = state1.inputOne + state1.inputZero;
+  const total2      = state2.inputOne + state2.inputZero;
   const totalProd   = total1 + total2;
   const totalTarget = state1.totalTarget + state2.totalTarget;
-  const pct    = totalTarget > 0 ? Math.min(Math.round((totalProd / totalTarget) * 100), 100) : 0;
-  const active = (state1.online ? 1 : 0) + (state2.online ? 1 : 0);
+  const pct         = totalTarget > 0 ? Math.min(Math.round((totalProd / totalTarget) * 100), 100) : 0;
+  const active      = (state1.online ? 1 : 0) + (state2.online ? 1 : 0);
   const totalGoodRaw = state1.inputOne + state2.inputOne;
-  const totalGood = Math.max(0, totalGoodRaw - totalRejectFromPackaging); // Net: Good(1) - Reject
-  const totalZero = state1.inputZero + state2.inputZero;
+  const totalGood   = Math.max(0, totalGoodRaw - totalRejectFromPackaging);
+  const totalZero   = state1.inputZero + state2.inputZero;
+  const loadingTimeMs = ((state1.totalTarget || 0) + (state2.totalTarget || 0)) * MS_PER_PCS_PARALEL;
+  const avgSetupMs    = Math.round(((state1.setupTime || 0) + (state2.setupTime || 0)) / 2);
 
-  if (el('total-production'))  el('total-production').innerText  = totalProd;
-  if (el('total-target'))      el('total-target').innerText      = totalTarget;
-  if (el('total-percent'))     el('total-percent').innerText     = pct + '%';
-  if (el('active-machines'))   el('active-machines').innerText   = active;
-  if (el('total-input-good'))  el('total-input-good').innerText  = totalGood;
-  if (el('total-input-zero'))  el('total-input-zero').innerText  = totalZero;
-
-  // Total waktu (gabungan kedua mesin)
-  const totalLost     = (state1.lostTimeAcc + state1.lostWatch) + (state2.lostTimeAcc + state2.lostWatch);
-  const totalDowntime = state1.downtimeAcc + state2.downtimeAcc;
-  if (el('total-lost-time'))  el('total-lost-time').innerText  = formatTime(totalLost);
-  if (el('total-downtime'))   el('total-downtime').innerText   = formatTime(totalDowntime);
+  if (el('total-production'))   el('total-production').innerText   = totalProd;
+  if (el('total-target'))       el('total-target').innerText       = totalTarget;
+  if (el('total-percent'))      el('total-percent').innerText      = pct + '%';
+  if (el('active-machines'))    el('active-machines').innerText    = active;
+  if (el('total-input-good'))   el('total-input-good').innerText   = totalGood;
+  if (el('total-input-zero'))   el('total-input-zero').innerText   = totalZero;
+  if (el('total-loading-time')) el('total-loading-time').innerText = formatTime(loadingTimeMs);
+  if (el('total-setup-time'))   el('total-setup-time').innerText   = formatTime(avgSetupMs);
 }
 
-// ── Timestamp update terakhir ──────────────────────────────
 function updateTimestamp() {
-  if (el('update-time'))
-    el('update-time').innerText = new Date().toLocaleTimeString('id-ID');
+  if (el('update-time')) el('update-time').innerText = new Date().toLocaleTimeString('id-ID');
 }
 
-// ── Status badge mesin ─────────────────────────────────────
 function setMachineStatus(num, online) {
   const s = el('status' + num);
   const m = el('machine' + num);
   if (!s) return;
   if (online) {
-    s.innerText   = 'ONLINE';
-    s.className   = 'font-mono text-[9px] tracking-[0.2em] uppercase px-3.5 py-1.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/25';
+    s.innerText = 'ONLINE';
+    s.className = 'font-mono text-[9px] tracking-[0.2em] uppercase px-3.5 py-1.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/25';
     m?.classList.remove('border-white/[0.07]', 'border-red-500/20');
     m?.classList.add('border-emerald-500/20');
   } else {
-    s.innerText   = 'OFFLINE';
-    s.className   = 'font-mono text-[9px] tracking-[0.2em] uppercase px-3.5 py-1.5 rounded-full bg-red-500/10 text-red-400 border border-red-500/25';
+    s.innerText = 'OFFLINE';
+    s.className = 'font-mono text-[9px] tracking-[0.2em] uppercase px-3.5 py-1.5 rounded-full bg-red-500/10 text-red-400 border border-red-500/25';
     m?.classList.remove('border-emerald-500/20', 'border-white/[0.07]');
     m?.classList.add('border-red-500/20');
   }
 }
 
-// ── Notifikasi reset ───────────────────────────────────────
 function showResetNotification(name) {
   let n = document.getElementById('reset-notif');
   if (n) n.remove();
@@ -240,22 +343,24 @@ const mqttClient = mqtt.connect('wss://broker.hivemq.com:8884/mqtt');
 
 mqttClient.on('connect', () => {
   console.log('✅ MQTT Connected');
-  if (el('mqtt-status')) {
-    el('mqtt-status').innerText   = 'Connected';
-    el('mqtt-status').style.color = '#4ade80';
-  }
-  ['machine1','machine2'].forEach(m => {
-    ['count','setup','lost','runtime','target','reset','downtime','downtime-start'].forEach(t => {
+  if (el('mqtt-status')) { el('mqtt-status').innerText = 'Connected'; el('mqtt-status').style.color = '#4ade80'; }
+  ['machine1', 'machine2'].forEach(m => {
+    ['count','setup','lost','runtime','target','reset','downtime','downtime-start','setup-info','restarted'].forEach(t => {
       mqttClient.subscribe(`oee/${m}/${t}`);
     });
   });
-  // Subscribe ke data reject dari halaman reject packaging
   mqttClient.subscribe('oee/reject/data');
+  mqttClient.subscribe('oee/reject/total');
+  mqttClient.subscribe('oee/shared-downtime');
+  mqttClient.subscribe('oee/machine1/minor');
+  mqttClient.subscribe('oee/machine2/minor');
+  mqttClient.subscribe('oee/machine1/relay-status');
+  mqttClient.subscribe('oee/machine2/relay-status');
   console.log('📡 Subscribed semua topic');
 });
 
-mqttClient.on('error',     () => { if (el('mqtt-status')) { el('mqtt-status').innerText = 'Error';        el('mqtt-status').style.color = '#f87171'; }});
-mqttClient.on('reconnect', () => { if (el('mqtt-status')) { el('mqtt-status').innerText = 'Reconnecting'; el('mqtt-status').style.color = '#fb923c'; }});
+mqttClient.on('error',     () => { if (el('mqtt-status')) { el('mqtt-status').innerText = 'Error';        el('mqtt-status').style.color = '#f87171'; } });
+mqttClient.on('reconnect', () => { if (el('mqtt-status')) { el('mqtt-status').innerText = 'Reconnecting'; el('mqtt-status').style.color = '#fb923c'; } });
 mqttClient.on('offline',   () => {
   if (el('mqtt-status')) { el('mqtt-status').innerText = 'Offline'; el('mqtt-status').style.color = '#f87171'; }
   state1.online = state2.online = false;
@@ -263,187 +368,260 @@ mqttClient.on('offline',   () => {
   updateSummary();
 });
 
-// ── MQTT message handler ───────────────────────────────────
-mqttClient.on('message', (topic, message) => {
+mqttClient.on('message', async (topic, message) => {
   const payload = message.toString().trim();
-  console.log(`📨 [${topic}] → ${payload}`);
+
+  // ══════════════════════════════════════════════════════════
+  // RESTART SIGNAL — SATU-SATUNYA titik INSERT row baru
+  // ══════════════════════════════════════════════════════════
+  if (topic === 'oee/machine1/restarted') {
+    if (payload !== '1') return;
+    console.log('[Dashboard DB] Sinyal restart M1 → INSERT row baru');
+    mqttClient.publish('oee/machine1/restarted', '', { retain: true }); // clear retained
+    await handleRestarted(1);
+    return;
+  }
+  if (topic === 'oee/machine2/restarted') {
+    if (payload !== '1') return;
+    console.log('[Dashboard DB] Sinyal restart M2 → INSERT row baru');
+    mqttClient.publish('oee/machine2/restarted', '', { retain: true }); // clear retained
+    await handleRestarted(2);
+    return;
+  }
+
+  // ══════════════════════════════════════════════════════════
+  // SETUP INFO — hanya UPDATE row yang sudah ada
+  // INSERT hanya jika pertama kali buka dashboard (tidak ada session)
+  // ══════════════════════════════════════════════════════════
+  if (topic === 'oee/machine1/setup-info') {
+    try {
+      const info = JSON.parse(payload);
+      setupInfo1 = {
+        shift:   info.shift   || 1,
+        product: info.product || '-',
+        date:    info.date    || new Date().toISOString().split('T')[0],
+      };
+      renderSetupInfo();
+      console.log('[Dashboard] Setup M1:', setupInfo1);
+      if (dbSessionId) {
+        console.log(`[Dashboard DB] UPDATE id=${dbSessionId} — shift=${setupInfo1.shift} produk="${setupInfo1.product}"`);
+        hideRestartWaitNotif();
+        dbUpdateSession();
+      } else {
+        console.log('[Dashboard DB] Tidak ada session — INSERT pertama kali (setup M1)');
+        await dbInsertSession();
+      }
+    } catch(e) { console.warn('⚠️ setup-info M1 parse error:', e); }
+    return;
+  }
+
+  if (topic === 'oee/machine2/setup-info') {
+    try {
+      const info = JSON.parse(payload);
+      setupInfo2 = {
+        shift:   info.shift   || 1,
+        product: info.product || '-',
+        date:    info.date    || new Date().toISOString().split('T')[0],
+      };
+      renderSetupInfo();
+      console.log('[Dashboard] Setup M2:', setupInfo2);
+      if (dbSessionId) {
+        console.log(`[Dashboard DB] UPDATE id=${dbSessionId} — setup M2`);
+        dbUpdateSession();
+      } else {
+        console.log('[Dashboard DB] Tidak ada session — INSERT pertama kali (setup M2)');
+        await dbInsertSession();
+      }
+    } catch(e) { console.warn('⚠️ setup-info M2 parse error:', e); }
+    return;
+  }
 
   // ══ MESIN 1 ══════════════════════════════════════════════
+  if (topic === 'oee/machine1/relay-status') {
+    sensor1Enabled = (payload === 'ON');
+    saveDashState();
+    console.log('[Dashboard] Sensor M1:', payload);
+  }
+
   if (topic === 'oee/machine1/count') {
-    state1.online = true;
-    setMachineStatus(1, true);
-    lastMsg1 = Date.now();
-
-    if (payload === '1') {
-      state1.inputOne++;
-      stopZeroTrack(state1, 1);
-    } else {
-      state1.inputZero++;
-      startZeroTrack(state1, 1);
-    }
+    if (!sensor1Enabled) return;
+    state1.online = true; setMachineStatus(1, true); lastMsg1 = Date.now();
+    if (payload === '1') { state1.inputOne++;  stopZeroTrack(state1, 1); }
+    else                 { state1.inputZero++; startZeroTrack(state1, 1); }
     updateDisplay1();
   }
+  if (topic === 'oee/machine1/setup')   { state1.setupTime   = parseInt(payload) || 0; updateDisplay1(); }
+  if (topic === 'oee/machine1/lost')    { console.log(`[M1] Lost: ${payload}ms`); }
+  if (topic === 'oee/machine1/runtime') { state1.runtime     = parseInt(payload) || 0; updateDisplay1(); }
+  if (topic === 'oee/machine1/target')  { state1.totalTarget = parseInt(payload) || 0; updateDisplay1(); dbUpdateSession(); }
 
-  if (topic === 'oee/machine1/setup') {
-    state1.setupTime = parseInt(payload) || 0;
-    updateDisplay1();
-  }
-
-  if (topic === 'oee/machine1/lost') {
-    console.log(`[M1] Lost streak from ESP32: ${payload}ms`);
-  }
-
-  if (topic === 'oee/machine1/runtime') {
-    state1.runtime = parseInt(payload) || 0;
-    updateDisplay1();
-  }
-
-  if (topic === 'oee/machine1/target') {
-    state1.totalTarget = parseInt(payload) || 0;
-    updateDisplay1();
-  }
-
-  // Downtime dimulai (popup muncul di controle.js) — set inDowntime agar liveTimer naik
   if (topic === 'oee/machine1/downtime-start') {
     state1.inDowntime = true;
-    console.log('[M1] downtime-start received — liveTimer akan naik');
+    console.log('[M1] downtime-start received');
   }
 
   if (topic === 'oee/machine1/downtime') {
     try {
       const ev = JSON.parse(payload);
-      state1.downtimeAcc += ev.durasi_ms || 0;
-      // Reset stopwatch sesi ini — lostWatch kembali ke 0, siap untuk sesi berikutnya
-      state1.lostWatch  = 0;
+      if (ev.downtime_total != null) state1.downtimeAcc       = ev.downtime_total;
+      if (ev.minor_total   != null)  state1.minorBreakdownAcc = ev.minor_total;
+      state1.minorBreakdownWatch = 0;
       state1.inDowntime = false;
-      // liveTimer tetap jalan — fase 1 lagi dari 0
-      console.log(`[M1] Downtime submit: ${ev.alasan} (${((ev.durasi_ms||0)/1000).toFixed(0)}s) total=${(state1.downtimeAcc/1000).toFixed(0)}s`);
-      // Update downtime display langsung dengan nilai final
       if (el('downtime1')) el('downtime1').innerText = formatTime(state1.downtimeAcc);
       updateDisplay1();
+      dbUpdateSession();
     } catch(e) { console.warn('⚠️ downtime parse error M1:', e); }
   }
 
+  // ── Reset M1 — clear lokal SAJA, dbSessionId TIDAK diubah ──
   if (topic === 'oee/machine1/reset') {
-    console.log('🔄 RESET Mesin 1');
-    clearInterval(state1._liveTimer);
-    Object.assign(state1, makeState());
-    totalRejectFromPackaging = 0;
-    // Broadcast reset ke reject packaging — Good(1) di sana ikut kembali ke 0
-    mqttClient.publish('oee/reject/total', '0', { retain: true });
-    setMachineStatus(1, false);
-    updateDisplay1();
-    showResetNotification('Mesin 1');
+    console.log('🔄 RESET Mesin 1 — save ke DB lalu clear lokal (dbSessionId tetap)');
+    if (_dbUpdateTimer) { clearTimeout(_dbUpdateTimer); _dbUpdateTimer = null; }
+    const _clearM1 = () => {
+      clearInterval(state1._liveTimer);
+      Object.assign(state1, makeState());
+      totalRejectFromPackaging = 0;
+      mqttClient.publish('oee/reject/total', '0', { retain: true });
+      clearDashState1();
+      sensor1Enabled = false;
+      try { localStorage.removeItem('oee_mesin1_state'); } catch(e) {}
+      setMachineStatus(1, false);
+      updateDisplay1();
+      showResetNotification('Mesin 1');
+      console.log(`[Dashboard DB] Reset M1 selesai — dbSessionId masih = ${dbSessionId}`);
+    };
+    dbUpdateSessionNow().then(() => _clearM1()).catch(() => _clearM1());
   }
 
   // ══ MESIN 2 ══════════════════════════════════════════════
+  if (topic === 'oee/machine2/relay-status') {
+    sensor2Enabled = (payload === 'ON');
+    saveDashState();
+    console.log('[Dashboard] Sensor M2:', payload);
+  }
+
   if (topic === 'oee/machine2/count') {
-    state2.online = true;
-    setMachineStatus(2, true);
-    lastMsg2 = Date.now();
-
-    if (payload === '1') {
-      state2.inputOne++;
-      stopZeroTrack(state2, 2);
-    } else {
-      state2.inputZero++;
-      startZeroTrack(state2, 2);
-    }
+    if (!sensor2Enabled) return;
+    state2.online = true; setMachineStatus(2, true); lastMsg2 = Date.now();
+    if (payload === '1') { state2.inputOne++;  stopZeroTrack(state2, 2); }
+    else                 { state2.inputZero++; startZeroTrack(state2, 2); }
     updateDisplay2();
   }
-
-  if (topic === 'oee/machine2/setup') {
-    state2.setupTime = parseInt(payload) || 0;
-    updateDisplay2();
-  }
-
-  if (topic === 'oee/machine2/lost') {
-    console.log(`[M2] Lost streak from ESP32: ${payload}ms`);
-  }
-
-  if (topic === 'oee/machine2/runtime') {
-    state2.runtime = parseInt(payload) || 0;
-    updateDisplay2();
-  }
-
-  if (topic === 'oee/machine2/target') {
-    state2.totalTarget = parseInt(payload) || 0;
-    updateDisplay2();
-  }
+  if (topic === 'oee/machine2/setup')   { state2.setupTime   = parseInt(payload) || 0; updateDisplay2(); }
+  if (topic === 'oee/machine2/lost')    { console.log(`[M2] Lost: ${payload}ms`); }
+  if (topic === 'oee/machine2/runtime') { state2.runtime     = parseInt(payload) || 0; updateDisplay2(); }
+  if (topic === 'oee/machine2/target')  { state2.totalTarget = parseInt(payload) || 0; updateDisplay2(); dbUpdateSession(); }
 
   if (topic === 'oee/machine2/downtime-start') {
     state2.inDowntime = true;
-    console.log('[M2] downtime-start received — liveTimer akan naik');
+    console.log('[M2] downtime-start received');
   }
 
   if (topic === 'oee/machine2/downtime') {
     try {
       const ev = JSON.parse(payload);
-      state2.downtimeAcc += ev.durasi_ms || 0;
-      state2.lostWatch  = 0;
+      if (ev.downtime_total != null) state2.downtimeAcc       = ev.downtime_total;
+      if (ev.minor_total   != null)  state2.minorBreakdownAcc = ev.minor_total;
+      state2.minorBreakdownWatch = 0;
       state2.inDowntime = false;
-      console.log(`[M2] Downtime submit: ${ev.alasan} (${((ev.durasi_ms||0)/1000).toFixed(0)}s) total=${(state2.downtimeAcc/1000).toFixed(0)}s`);
       if (el('downtime2')) el('downtime2').innerText = formatTime(state2.downtimeAcc);
       updateDisplay2();
+      dbUpdateSession();
     } catch(e) { console.warn('⚠️ downtime parse error M2:', e); }
   }
 
+  // ── Reset M2 — clear lokal SAJA, dbSessionId TIDAK diubah ──
   if (topic === 'oee/machine2/reset') {
-    console.log('🔄 RESET Mesin 2');
-    clearInterval(state2._liveTimer);
-    Object.assign(state2, makeState());
-    totalRejectFromPackaging = 0;
-    // Broadcast reset ke reject packaging
-    mqttClient.publish('oee/reject/total', '0', { retain: true });
-    setMachineStatus(2, false);
-    updateDisplay2();
-    showResetNotification('Mesin 2');
+    console.log('🔄 RESET Mesin 2 — save ke DB lalu clear lokal (dbSessionId tetap)');
+    if (_dbUpdateTimer) { clearTimeout(_dbUpdateTimer); _dbUpdateTimer = null; }
+    const _clearM2 = () => {
+      clearInterval(state2._liveTimer);
+      Object.assign(state2, makeState());
+      totalRejectFromPackaging = 0;
+      mqttClient.publish('oee/reject/total', '0', { retain: true });
+      clearDashState2();
+      sensor2Enabled = false;
+      try { localStorage.removeItem('oee_mesin2_state'); } catch(e) {}
+      setMachineStatus(2, false);
+      updateDisplay2();
+      showResetNotification('Mesin 2');
+      console.log(`[Dashboard DB] Reset M2 selesai — dbSessionId masih = ${dbSessionId}`);
+    };
+    dbUpdateSessionNow().then(() => _clearM2()).catch(() => _clearM2());
   }
 
-  // ══ SINKRON TOTAL REJECT (retained, saat halaman baru dibuka) ══
+  // ══ SHARED DOWNTIME ════════════════════════════════════════
+  if (topic === 'oee/shared-downtime') {
+    try {
+      const ev     = JSON.parse(payload);
+      const durasi = ev.durasi_ms || 0;
+      if (durasi > state1.downtimeAcc) state1.downtimeAcc = durasi;
+      if (durasi > state2.downtimeAcc) state2.downtimeAcc = durasi;
+      console.log(`[Dashboard] Shared downtime SET ke ${(durasi/1000).toFixed(0)}s dari M${ev.dari_mesin}`);
+      updateDisplay1(); updateDisplay2();
+    } catch(e) { console.warn('⚠️ shared-downtime parse error:', e); }
+  }
+
+  // ══ MINOR BREAKDOWN SYNC ═══════════════════════════════════
+  if (topic === 'oee/machine1/minor') {
+    try {
+      const ev = JSON.parse(payload);
+      if (ev.minor_total != null) state1.minorBreakdownAcc = ev.minor_total;
+      state1.inDowntime = false;
+      updateDisplay1();
+    } catch(e) {}
+  }
+  if (topic === 'oee/machine2/minor') {
+    try {
+      const ev = JSON.parse(payload);
+      if (ev.minor_total != null) state2.minorBreakdownAcc = ev.minor_total;
+      state2.inDowntime = false;
+      updateDisplay2();
+    } catch(e) {}
+  }
+
+  // ══ REJECT SYNC ════════════════════════════════════════════
   if (topic === 'oee/reject/total') {
     const val = parseInt(payload) || 0;
     if (val !== totalRejectFromPackaging) {
       totalRejectFromPackaging = val;
-      updateSummary();
-      updateOEE();
+      updateSummary(); updateOEE();
+      dbUpdateSession();
     }
   }
-
-  // ══ DATA REJECT DARI HALAMAN REJECT PACKAGING ════════════
   if (topic === 'oee/reject/data') {
     try {
       const rec = JSON.parse(payload);
-      // Ambil totalReject terbaru dari record submit
       if (typeof rec.totalReject === 'number') {
-        totalRejectFromPackaging += rec.totalReject;  // AKUMULASI, bukan replace
-        console.log(`📦 Reject +${rec.totalReject}, total: ${totalRejectFromPackaging}`);
-        // Broadcast total terbaru ke semua halaman (termasuk reject packaging)
+        totalRejectFromPackaging += rec.totalReject;
         mqttClient.publish('oee/reject/total', String(totalRejectFromPackaging), { retain: true });
-        updateSummary();
-        updateOEE();
-        updateTimestamp();
+        updateSummary(); updateOEE(); updateTimestamp();
+        dbUpdateSession();
       }
-    } catch(e) {
-      console.warn('⚠️ Gagal parse reject data:', e);
+    } catch(e) { console.warn('⚠️ Gagal parse reject data:', e); }
+  }
+
+  if (topic === 'oee/machine1/status' || topic === 'oee/machine2/status') {
+    if (payload === 'RESTARTING') {
+      const now = Date.now();
+      if (now - lastRestartSignal > 10000) {
+        lastRestartSignal = now;
+        setTimeout(() => window.location.reload(true), 5000);
+      }
     }
   }
 });
 
 // ── Deteksi offline timeout 30 detik ──────────────────────
-let lastMsg1 = 0, lastMsg2 = 0;
+let lastMsg1 = 0, lastMsg2 = 0, lastRestartSignal = 0;
 
 setInterval(() => {
   const now = Date.now();
-  if (state1.online && now - lastMsg1 > 30000) {
-    state1.online = false; setMachineStatus(1, false); updateSummary();
-    console.log('⚠️ Machine 1 offline (timeout)');
-  }
-  if (state2.online && now - lastMsg2 > 30000) {
-    state2.online = false; setMachineStatus(2, false); updateSummary();
-    console.log('⚠️ Machine 2 offline (timeout)');
-  }
+  if (state1.online && now - lastMsg1 > 30000) { state1.online = false; setMachineStatus(1, false); updateSummary(); }
+  if (state2.online && now - lastMsg2 > 30000) { state2.online = false; setMachineStatus(2, false); updateSummary(); }
 }, 5000);
+
+setInterval(saveDashState, 10000);
 
 // ══ OEE GAUGE ═════════════════════════════════════════════
 function drawGauge(canvasId, pct, color) {
@@ -454,178 +632,279 @@ function drawGauge(canvasId, pct, color) {
   const cx = W / 2, cy = H - 10;
   const r  = Math.min(W * 0.42, H * 0.88);
   ctx.clearRect(0, 0, W, H);
-
   const SA = Math.PI, EA = 2 * Math.PI;
-
-  // Track
   ctx.beginPath(); ctx.arc(cx, cy, r, SA, EA);
   ctx.strokeStyle = 'rgba(255,255,255,0.06)'; ctx.lineWidth = 16; ctx.lineCap = 'round'; ctx.stroke();
-
-  // Zones
   [{f:0,t:.45,c:'rgba(248,113,113,0.18)'},{f:.45,t:.65,c:'rgba(251,146,60,0.18)'},
-   {f:.65,t:.85,c:'rgba(250,204,21,0.18)'},{f:.85,t:1,c:'rgba(74,222,128,0.18)'}].forEach(z=>{
+   {f:.65,t:.85,c:'rgba(250,204,21,0.18)'},{f:.85,t:1,c:'rgba(74,222,128,0.18)'}].forEach(z => {
     ctx.beginPath(); ctx.arc(cx, cy, r, SA+z.f*Math.PI, SA+z.t*Math.PI);
-    ctx.strokeStyle=z.c; ctx.lineWidth=16; ctx.lineCap='butt'; ctx.stroke();
+    ctx.strokeStyle = z.c; ctx.lineWidth = 16; ctx.lineCap = 'butt'; ctx.stroke();
   });
-
-  // Value arc
-  const c = Math.min(Math.max(pct,0),100);
+  const c = Math.min(Math.max(pct, 0), 100);
   if (c > 0) {
     ctx.beginPath(); ctx.arc(cx, cy, r, SA, SA+(c/100)*Math.PI);
-    ctx.strokeStyle=color; ctx.lineWidth=16; ctx.lineCap='round';
-    ctx.shadowColor=color; ctx.shadowBlur=18; ctx.stroke(); ctx.shadowBlur=0;
+    ctx.strokeStyle = color; ctx.lineWidth = 16; ctx.lineCap = 'round';
+    ctx.shadowColor = color; ctx.shadowBlur = 18; ctx.stroke(); ctx.shadowBlur = 0;
   }
-
-  // Ticks
-  [0,25,50,75,100].forEach(t=>{
+  [0, 25, 50, 75, 100].forEach(t => {
     const a = SA+(t/100)*Math.PI;
     ctx.beginPath(); ctx.moveTo(cx+(r-22)*Math.cos(a), cy+(r-22)*Math.sin(a));
     ctx.lineTo(cx+(r-8)*Math.cos(a), cy+(r-8)*Math.sin(a));
-    ctx.strokeStyle='rgba(255,255,255,0.25)'; ctx.lineWidth=1.5; ctx.lineCap='round'; ctx.stroke();
+    ctx.strokeStyle = 'rgba(255,255,255,0.25)'; ctx.lineWidth = 1.5; ctx.lineCap = 'round'; ctx.stroke();
   });
-
-  // Needle
   const na = SA+(c/100)*Math.PI;
   ctx.beginPath(); ctx.moveTo(cx, cy); ctx.lineTo(cx+(r-26)*Math.cos(na), cy+(r-26)*Math.sin(na));
-  ctx.strokeStyle='#fff'; ctx.lineWidth=2.5; ctx.lineCap='round';
-  ctx.shadowColor='#fff'; ctx.shadowBlur=8; ctx.stroke(); ctx.shadowBlur=0;
-
-  // Center dot
+  ctx.strokeStyle = '#fff'; ctx.lineWidth = 2.5; ctx.lineCap = 'round';
+  ctx.shadowColor = '#fff'; ctx.shadowBlur = 8; ctx.stroke(); ctx.shadowBlur = 0;
   ctx.beginPath(); ctx.arc(cx, cy, 6, 0, Math.PI*2);
-  ctx.fillStyle=color; ctx.shadowColor=color; ctx.shadowBlur=12; ctx.fill(); ctx.shadowBlur=0;
-
-  // Labels
-  ctx.font='400 9px "DM Mono",monospace'; ctx.fillStyle='rgba(255,255,255,0.28)';
-  ctx.textAlign='center'; ctx.textBaseline='middle';
-  [['0',SA],['50',SA+.5*Math.PI],['100',EA]].forEach(([l,a])=>{
+  ctx.fillStyle = color; ctx.shadowColor = color; ctx.shadowBlur = 12; ctx.fill(); ctx.shadowBlur = 0;
+  ctx.font = '400 9px "DM Mono",monospace'; ctx.fillStyle = 'rgba(255,255,255,0.28)';
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  [['0',SA],['50',SA+.5*Math.PI],['100',EA]].forEach(([l,a]) => {
     ctx.fillText(l, cx+(r+18)*Math.cos(a), cy+(r+18)*Math.sin(a));
   });
 }
 
 function oeeLabel(p) {
-  if (p>=85) return 'World Class ✦';
-  if (p>=65) return 'Good';
-  if (p>=45) return 'Average';
+  if (p >= 85) return 'World Class ✦';
+  if (p >= 65) return 'Good';
+  if (p >= 45) return 'Average';
   return 'Below Average';
 }
 function gaugeColor(p) {
-  if (p>=85) return '#4ade80';
-  if (p>=65) return '#facc15';
-  if (p>=45) return '#fb923c';
+  if (p >= 85) return '#4ade80';
+  if (p >= 65) return '#facc15';
+  if (p >= 45) return '#fb923c';
   return '#f87171';
 }
 
 function updateOEE() {
-  // Good(1) dikurangi total reject dari packaging
-  const rawGood     = state1.inputOne + state2.inputOne;
-  const netGood     = Math.max(0, rawGood - totalRejectFromPackaging);
+  const rawGood        = state1.inputOne + state2.inputOne;
+  const netGood        = Math.max(0, rawGood - totalRejectFromPackaging);
+  const loadingTimeMs  = ((state1.totalTarget || 0) + (state2.totalTarget || 0)) * MS_PER_PCS_PARALEL;
+  const avgSetupMs     = ((state1.setupTime || 0) + (state2.setupTime || 0)) / 2;
+  const totalBreakdownMs = (state1.downtimeAcc || 0) + (state2.downtimeAcc || 0);
 
-  const totalTarget = (state1.totalTarget || 0) + (state2.totalTarget || 0);
-  const totalPieces = (state1.inputOne + state1.inputZero) + (state2.inputOne + state2.inputZero);
-
-  // Runtime gabungan (ambil yang terbesar / rata-rata kedua mesin dalam ms)
-  // Gunakan total runtime kedua mesin dibagi 2 jika keduanya aktif, atau yang ada nilai
-  const runtimeMs1 = state1.runtime || 0;
-  const runtimeMs2 = state2.runtime || 0;
-  // Gunakan max runtime sebagai waktu actual (shift berjalan bersamaan)
-  const actualRuntimeMs = Math.max(runtimeMs1, runtimeMs2);
-
-  // ── Availability Rate ──────────────────────────────────
-  const estWaktu = totalTarget * MS_PER_PCS;
-  const downtime = (state1.lostTimeAcc + state1.lostWatch + state1.downtimeAcc) + (state2.lostTimeAcc + state2.lostWatch + state2.downtimeAcc);
-  const ar = estWaktu > 0 ? Math.max(((estWaktu - downtime) / estWaktu) * 100, 0) : 0;
-
-  // ── Performance Rate (RUMUS BARU) ──────────────────────
-  // PR = (netGood × 2.222 detik ÷ 60) ÷ (Runtime_detik ÷ 60) × 100
-  // → PR = (netGood × 2.222) / Runtime_detik × 100
-  // Runtime dikonversi dari ms ke detik
-  const runtimeSec = actualRuntimeMs / 1000;
-  const pr = runtimeSec > 0
-    ? Math.min(((netGood * (MS_PER_PCS / 1000)) / runtimeSec) * 100, 100)
+  const ar = loadingTimeMs > 0
+    ? Math.max(((loadingTimeMs - avgSetupMs - totalBreakdownMs) / loadingTimeMs) * 100, 0)
     : 0;
 
-  // ── Quality Rate ───────────────────────────────────────
-  // QR = netGood / totalPieces × 100
-  const qr = totalPieces > 0 ? Math.min((netGood / totalPieces) * 100, 100) : 0;
+  const operatingTimeMs    = Math.max(loadingTimeMs - avgSetupMs - totalBreakdownMs, 0);
+  const mbLiveM1           = state1.minorBreakdownAcc + (!state1.inDowntime ? getWatchTotal(state1) : (state1.minorBreakdownWatch || 0));
+  const mbLiveM2           = state2.minorBreakdownAcc + (!state2.inDowntime ? getWatchTotal(state2) : (state2.minorBreakdownWatch || 0));
+  const avgMinorMs         = (mbLiveM1 + mbLiveM2) / 2;
+  const netOperatingTimeMs = Math.max(operatingTimeMs - avgMinorMs, 0);
+
+  const pr = operatingTimeMs > 0
+    ? Math.min((netOperatingTimeMs / operatingTimeMs) * 100, 100)
+    : 0;
+
+  if (el('total-operating-time'))     el('total-operating-time').innerText     = formatTime(operatingTimeMs);
+  if (el('total-net-operating-time')) el('total-net-operating-time').innerText = formatTime(netOperatingTimeMs);
+
+  const netOpMenit = netOperatingTimeMs / 60000;
+  const qr = netOpMenit > 0
+    ? Math.max(Math.min((1 - (totalRejectFromPackaging / 58) / netOpMenit) * 100, 100), 0)
+    : 0;
 
   const oee  = (ar / 100) * (pr / 100) * (qr / 100) * 100;
-  const arR  = Math.round(ar);
-  const prR  = Math.round(pr);
-  const qrR  = Math.round(qr);
-  const oeeR = Math.round(oee);
+  const arR  = Math.round(ar), prR = Math.round(pr), qrR = Math.round(qr), oeeR = Math.round(oee);
 
   drawGauge('gauge-ar', arR, gaugeColor(arR));
   drawGauge('gauge-pr', prR, '#60a5fa');
   drawGauge('gauge-qr', qrR, '#a78bfa');
-
   if (el('ar-value')) { el('ar-value').innerText = arR + '%'; el('ar-value').style.color = gaugeColor(arR); }
-  if (el('pr-value'))   el('pr-value').innerText = prR + '%';
-  if (el('qr-value'))   el('qr-value').innerText = qrR + '%';
-  if (el('ar-label'))   el('ar-label').innerText = oeeLabel(arR);
-  if (el('pr-label'))   el('pr-label').innerText = oeeLabel(prR);
-  if (el('qr-label'))   el('qr-label').innerText = oeeLabel(qrR);
-  if (el('oee-value'))  el('oee-value').innerText = oeeR + '%';
-  if (el('oee-bar'))    el('oee-bar').style.width  = Math.min(oeeR, 100) + '%';
-
-  // Log untuk debug
-  console.log(`[OEE] netGood=${netGood} (raw=${rawGood} - reject=${totalRejectFromPackaging})`);
-  console.log(`[OEE] AR=${arR}% | PR=${prR}% (runtimeSec=${runtimeSec.toFixed(1)}) | QR=${qrR}% | OEE=${oeeR}%`);
+  if (el('pr-value'))  el('pr-value').innerText  = prR + '%';
+  if (el('qr-value'))  el('qr-value').innerText  = qrR + '%';
+  if (el('ar-label'))  el('ar-label').innerText  = oeeLabel(arR);
+  if (el('pr-label'))  el('pr-label').innerText  = oeeLabel(prR);
+  if (el('qr-label'))  el('qr-label').innerText  = oeeLabel(qrR);
+  if (el('oee-value')) el('oee-value').innerText = oeeR + '%';
+  if (el('oee-bar'))   el('oee-bar').style.width = Math.min(oeeR, 100) + '%';
+  saveDashState();
 }
 
-// ── Download Excel ─────────────────────────────────────────
-function downloadExcel() {
-  const date  = document.getElementById('download-date')?.value;
-  const shift = document.getElementById('download-shift')?.value || '1';
-  if (!date) { alert('Pilih tanggal terlebih dahulu!'); return; }
+// ════════════════════════════════════════════════════════════
+// DATABASE SESSION
+// ════════════════════════════════════════════════════════════
+const API_BASE       = `http://${window.location.hostname}:3000/api`;
+const DB_SESSION_KEY = 'oee_dashboard_session_id';
 
-  const total1 = state1.inputOne + state1.inputZero;
-  const total2 = state2.inputOne + state2.inputZero;
-  const rawGood = state1.inputOne + state2.inputOne;
-  const netGood = Math.max(0, rawGood - totalRejectFromPackaging);
+let dbSessionId    = null;
+let dbSaveInterval = null;
 
-  const rows = [
-    ['LAPORAN PRODUKSI MESIN PACKING'],
-    ['Tanggal', date],
-    ['Shift', `Shift ${shift}`],
-    ['Waktu per pcs', `${MS_PER_PCS/1000} detik`],
-    ['Total Reject Packaging', totalRejectFromPackaging],
-    [],
-    ['Mesin','Input Good (1)','Input No Obj (0)','Total Pieces','Target','Est. Waktu','Progress %','Setup Time','Lost Time','Runtime','Operator'],
-    ['Mesin Packing #1', state1.inputOne, state1.inputZero, total1, state1.totalTarget,
-      formatEstimasi(state1.totalTarget * MS_PER_PCS),
-      state1.totalTarget > 0 ? Math.round((total1 / state1.totalTarget) * 100) + '%' : '0%',
-      formatTime(state1.setupTime), formatTime(state1.lostTimeAcc + state1.lostWatch), formatTime(state1.runtime), 'Budi Santoso'],
-    ['Mesin Packing #2', state2.inputOne, state2.inputZero, total2, state2.totalTarget,
-      formatEstimasi(state2.totalTarget * MS_PER_PCS),
-      state2.totalTarget > 0 ? Math.round((total2 / state2.totalTarget) * 100) + '%' : '0%',
-      formatTime(state2.setupTime), formatTime(state2.lostTimeAcc + state2.lostWatch), formatTime(state2.runtime), 'Siti Nurhaliza'],
-    [],
-    ['TOTAL', '', '', total1 + total2, state1.totalTarget + state2.totalTarget, '', '', '', '', '', ''],
-    [],
-    ['KUALITAS'],
-    ['Raw Good (1)', rawGood],
-    ['Total Reject Packaging', totalRejectFromPackaging],
-    ['Net Good (setelah reject)', netGood],
-  ];
-
-  const ws = XLSX.utils.aoa_to_sheet(rows);
-  const wb = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb, ws, 'Laporan Produksi');
-  XLSX.writeFile(wb, `Laporan_Produksi_${date}_Shift${shift}.xlsx`);
+function getDbPayload() {
+  const totalTarget = (state1.totalTarget || 0) + (state2.totalTarget || 0);
+  const rawGood     = (state1.inputOne   || 0) + (state2.inputOne   || 0);
+  const finishGoods = Math.max(0, rawGood - totalRejectFromPackaging);
+  const avgSetupMs  = ((state1.setupTime || 0) + (state2.setupTime || 0)) / 2;
+  const totalDtMs   = (state1.downtimeAcc || 0) + (state2.downtimeAcc || 0);
+  const mbLiveM1    = (state1.minorBreakdownAcc || 0) + getWatchTotal(state1);
+  const mbLiveM2    = (state2.minorBreakdownAcc || 0) + getWatchTotal(state2);
+  const avgMinorMs  = (mbLiveM1 + mbLiveM2) / 2;
+  return {
+    tgl_produksi:       setupInfo1.date    || new Date().toISOString().split('T')[0],
+    shift:              setupInfo1.shift   || 1,
+    product:            setupInfo1.product || '-',
+    target_m1:          state1.totalTarget || 0,
+    target_m2:          state2.totalTarget || 0,
+    finish_goods:       finishGoods,
+    total_reject:       totalRejectFromPackaging || 0,
+    setup_time_ms:      Math.round(avgSetupMs),
+    minor_breakdown_ms: Math.round(avgMinorMs),
+    downtime_ms:        Math.round(totalDtMs),
+  };
 }
 
-// ── Default tanggal ────────────────────────────────────────
-const dlDate = el('download-date');
-if (dlDate) {
-  const n = new Date();
-  dlDate.value = `${n.getFullYear()}-${String(n.getMonth()+1).padStart(2,'0')}-${String(n.getDate()).padStart(2,'0')}`;
+async function dbInsertSession() {
+  try {
+    const res  = await fetch(`${API_BASE}/session/start`, {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify(getDbPayload()),
+    });
+    const data = await res.json();
+    if (data.ok) {
+      dbSessionId = data.session_id;
+      localStorage.setItem(DB_SESSION_KEY, String(dbSessionId));
+      console.log(`[Dashboard DB] ✅ INSERT id=${dbSessionId}`);
+      startDbSaveInterval();
+    } else {
+      console.warn('[Dashboard DB] INSERT gagal:', data.error);
+    }
+  } catch(err) {
+    console.warn('[Dashboard DB] INSERT error:', err.message);
+  }
 }
 
-// ── Init ───────────────────────────────────────────────────
+let _dbUpdateTimer = null;
+function dbUpdateSession() {
+  if (!dbSessionId) return;
+  if (_dbUpdateTimer) return;
+  _dbUpdateTimer = setTimeout(async () => {
+    _dbUpdateTimer = null;
+    try {
+      const res  = await fetch(`${API_BASE}/session/${dbSessionId}`, {
+        method:  'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify(getDbPayload()),
+      });
+      const data = await res.json();
+      if (data.ok) console.log(`[Dashboard DB] UPDATE id=${dbSessionId} — OEE=${data.oee?.oee}%`);
+    } catch(err) {
+      console.warn('[Dashboard DB] UPDATE error:', err.message);
+    }
+  }, 10000);
+}
+
+async function dbUpdateSessionNow() {
+  if (!dbSessionId) return;
+  try {
+    await fetch(`${API_BASE}/session/${dbSessionId}`, {
+      method:    'PUT',
+      headers:   { 'Content-Type': 'application/json' },
+      body:      JSON.stringify(getDbPayload()),
+      keepalive: true,
+    });
+    console.log(`[Dashboard DB] Save now id=${dbSessionId}`);
+  } catch(err) {
+    console.warn('[Dashboard DB] Save now error:', err.message);
+  }
+}
+
+window.addEventListener('beforeunload', () => { dbUpdateSessionNow(); });
+
+function startDbSaveInterval() {
+  if (dbSaveInterval) clearInterval(dbSaveInterval);
+  dbSaveInterval = setInterval(dbUpdateSession, 60 * 1000);
+}
+
+// ════════════════════════════════════════════════════════════
+// RESTART HANDLER — finalize row lama + INSERT row baru
+// INSERT terjadi langsung di sini saat restart diterima
+// Reset TIDAK memanggil fungsi ini
+// ════════════════════════════════════════════════════════════
+async function handleRestarted(machineNum) {
+  console.log(`[Dashboard DB] Restart M${machineNum} — finalize row lama → INSERT row baru`);
+  if (_dbUpdateTimer) { clearTimeout(_dbUpdateTimer); _dbUpdateTimer = null; }
+
+  // Finalize row lama
+  if (dbSessionId) {
+    await dbUpdateSessionNow();
+    console.log(`[Dashboard DB] Row id=${dbSessionId} di-finalize`);
+  }
+
+  // Reset session id lokal
+  dbSessionId = null;
+  localStorage.removeItem(DB_SESSION_KEY);
+
+  // INSERT row baru langsung — shift/produk akan diisi setelah user tekan Simpan Setup via UPDATE
+  await dbInsertSession();
+  console.log(`[Dashboard DB] Row baru id=${dbSessionId} siap — shift/produk diisi via Simpan Setup`);
+
+  showRestartWaitNotif(`Mesin ${machineNum} restart`);
+}
+
+function showRestartWaitNotif(who) {
+  let n = document.getElementById('restart-wait-notif');
+  if (!n) {
+    n = document.createElement('div');
+    n.id = 'restart-wait-notif';
+    n.style.cssText =
+      'position:fixed;top:20px;left:50%;transform:translateX(-50%);z-index:9999;' +
+      'background:#13171f;border:1px solid rgba(251,146,60,0.4);border-radius:12px;' +
+      'padding:14px 24px;display:flex;align-items:center;gap:12px;' +
+      'box-shadow:0 0 30px rgba(251,146,60,0.15)';
+    document.body.appendChild(n);
+  }
+  n.innerHTML = `<span style="font-size:18px">📋</span><div>
+    <div style="font-family:DM Mono,monospace;font-size:10px;letter-spacing:0.12em;color:#fb923c;text-transform:uppercase">${who}</div>
+    <div style="font-size:12px;color:#7a7870;margin-top:3px">Silakan isi shift &amp; produk, lalu tekan Simpan Setup</div>
+  </div>`;
+}
+
+function hideRestartWaitNotif() {
+  document.getElementById('restart-wait-notif')?.remove();
+}
+
+// ── Init DB ───────────────────────────────────────────────
+(async function initDashboardDb() {
+  ['oee_mesin1_session_id', 'oee_mesin2_session_id'].forEach(k => {
+    try { localStorage.removeItem(k); } catch(e) {}
+  });
+  const saved = localStorage.getItem(DB_SESSION_KEY);
+  if (saved) {
+    dbSessionId = parseInt(saved) || null;
+    console.log(`[Dashboard DB] Lanjut sesi id=${dbSessionId}`);
+    startDbSaveInterval();
+  } else {
+    console.log('[Dashboard DB] Tidak ada session — INSERT baru...');
+    await dbInsertSession();
+  }
+})();
+
+// ── Init UI ───────────────────────────────────────────────
 updateDisplay1();
 updateDisplay2();
 updateOEE();
+renderSetupInfo();
 
-console.log('✅ dashboard.js loaded');
-console.log('   PR = (netGood × 2.222s) / (Runtime_detik) × 100');
-console.log('   netGood = Good(1) - Total Reject Packaging');
+setInterval(() => {
+  const anyActive = (state1.watchStart !== null) || (state2.watchStart !== null);
+  if (anyActive) updateOEE();
+}, 500);
+
+setInterval(() => {
+  const mbA  = state1.minorBreakdownAcc + ((!state1.inDowntime && state1.watchStart !== null) ? getWatchTotal(state1) : state1.minorBreakdownWatch);
+  const mbB  = state2.minorBreakdownAcc + ((!state2.inDowntime && state2.watchStart !== null) ? getWatchTotal(state2) : state2.minorBreakdownWatch);
+  if (el('total-minor-breakdown')) el('total-minor-breakdown').innerText = formatTime(Math.round((mbA + mbB) / 2));
+
+  const dtA  = state1.downtimeAcc + ((state1.inDowntime && state1.watchStart !== null) ? getWatchTotal(state1) : 0);
+  const dtB  = state2.downtimeAcc + ((state2.inDowntime && state2.watchStart !== null) ? getWatchTotal(state2) : 0);
+  if (el('total-downtime')) el('total-downtime').innerText = formatTime(Math.round((dtA + dtB) / 2));
+}, 500);
+
+console.log('✅ dashboard.js loaded (FIXED v3)');
+console.log('   INSERT HANYA di handleRestarted() — dipicu btnRestartESP');
+console.log('   Reset clear lokal saja — dbSessionId TIDAK diubah, TIDAK INSERT baru');
+console.log('   Simpan Setup → UPDATE row yang dibuat saat restart');

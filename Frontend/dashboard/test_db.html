@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html>
+<head><title>DB Test</title></head>
+<body style="font-family:monospace;padding:20px;background:#111;color:#eee">
+<h3>🔧 Database Connection Test</h3>
+<button onclick="testInsert()" style="padding:10px 20px;margin:5px;cursor:pointer">
+  Test INSERT Session
+</button>
+<button onclick="testGet()" style="padding:10px 20px;margin:5px;cursor:pointer">
+  Test GET Sessions
+</button>
+<button onclick="clearLog()" style="padding:10px 20px;margin:5px;cursor:pointer">
+  Clear Log
+</button>
+<pre id="log" style="background:#0d1117;padding:15px;border-radius:8px;margin-top:15px;
+  border:1px solid #333;min-height:200px;white-space:pre-wrap"></pre>
+
+<script>
+const API = `http://${window.location.hostname}:3000/api`;
+const log = document.getElementById('log');
+
+function addLog(msg, color='#4ade80') {
+  const time = new Date().toLocaleTimeString('id-ID');
+  log.innerHTML += `<span style="color:${color}">[${time}] ${msg}</span>\n`;
+}
+
+async function testInsert() {
+  addLog('→ POST ' + API + '/session/start ...', '#fb923c');
+  const payload = {
+    tgl_produksi: new Date().toISOString().split('T')[0],
+    shift: 1,
+    product: 'TEST',
+    target_m1: 100,
+    target_m2: 0,
+    finish_goods: 90,
+    total_reject: 5,
+    setup_time_ms: 0,
+    minor_breakdown_ms: 0,
+    downtime_ms: 0,
+  };
+  addLog('Payload: ' + JSON.stringify(payload), '#60a5fa');
+  try {
+    const res = await fetch(`${API}/session/start`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    const data = await res.json();
+    if (data.ok) {
+      addLog('✅ INSERT OK — session_id=' + data.session_id, '#4ade80');
+      addLog('OEE: ' + JSON.stringify(data.oee), '#4ade80');
+    } else {
+      addLog('❌ INSERT GAGAL: ' + JSON.stringify(data), '#f87171');
+    }
+  } catch(err) {
+    addLog('❌ FETCH ERROR: ' + err.message, '#f87171');
+    addLog('Pastikan server.js jalan & IP benar', '#fb923c');
+  }
+}
+
+async function testGet() {
+  addLog('→ GET ' + API + '/session ...', '#fb923c');
+  try {
+    const res = await fetch(`${API}/session`);
+    const data = await res.json();
+    addLog('✅ GET OK — ' + data.count + ' rows', '#4ade80');
+    if (data.data.length > 0) {
+      addLog('Row terbaru: ' + JSON.stringify(data.data[0]), '#60a5fa');
+    } else {
+      addLog('⚠️ Table kosong', '#fb923c');
+    }
+  } catch(err) {
+    addLog('❌ FETCH ERROR: ' + err.message, '#f87171');
+  }
+}
+
+function clearLog() { log.innerHTML = ''; }
+
+addLog('API Base: ' + API, '#60a5fa');
+addLog('Klik tombol untuk test koneksi database', '#57534e');
+</script>
+</body>
+</html>

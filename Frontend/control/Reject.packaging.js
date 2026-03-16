@@ -1,5 +1,7 @@
 document.addEventListener('DOMContentLoaded', () => {
-  const MS_PER_PCS = 2222;
+  const MS_PER_PCS         = 2069;
+  const MS_PER_PCS_PARALEL = 1034;
+  const STORAGE_KEY        = 'reject_pkg_state';
 
   const REJECT_TYPES = [
     { key: 'Kosong',             elId: 'Kosong',            color: '#f87171' },
@@ -10,28 +12,51 @@ document.addEventListener('DOMContentLoaded', () => {
     { key: 'Lain-lain',          elId: 'Lainlain',          color: '#4ade80' },
   ];
 
-  // State mesin dari MQTT
+  // ══ STATE ════════════════════════════════════════════════
   const mState = {
     m1: { inputOne: 0, inputZero: 0, target: 0, runtime: 0 },
     m2: { inputOne: 0, inputZero: 0, target: 0, runtime: 0 },
   };
 
-  // Input reject per jenis — selalu mulai dari 0, reset setelah submit
   const rVal = {};
   REJECT_TYPES.forEach(r => (rVal[r.key] = 0));
 
-  // Total reject yang sudah di-submit ke dashboard (sinkron via MQTT oee/reject/total)
-  // Ini digunakan agar disp-good sinkron dengan nilai di dashboard
   let totalSubmittedReject = 0;
-
-  // Riwayat submit
   let hist = JSON.parse(localStorage.getItem('reject_pkg_hist') || '[]');
 
-  // Numpad state
+  // ══ PERSIST ══════════════════════════════════════════════
+  function saveState() {
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify({
+        mState,
+        totalSubmittedReject,
+        savedAt: Date.now(),
+      }));
+    } catch(e) {}
+  }
+
+  function loadState() {
+    try {
+      const raw = localStorage.getItem(STORAGE_KEY);
+      if (!raw) return;
+      const snap = JSON.parse(raw);
+      if (snap.mState) {
+        if (snap.mState.m1) Object.assign(mState.m1, snap.mState.m1);
+        if (snap.mState.m2) Object.assign(mState.m2, snap.mState.m2);
+      }
+      totalSubmittedReject = snap.totalSubmittedReject || 0;
+      console.log('[Reject] State loaded from localStorage');
+    } catch(e) { console.warn('[Reject] Gagal load state:', e); }
+  }
+
+  // Load state sebelum render
+  loadState();
+
+  // ══ NUMPAD ════════════════════════════════════════════════
   let npTarget = '';
   let npBuffer = '';
 
-  const el = id => document.getElementById(id);
+  const el      = id => document.getElementById(id);
   const setText = (id, val) => { const e = el(id); if (e) e.innerText = val; };
 
   // ══ KALKULASI ════════════════════════════════════════════
@@ -41,26 +66,21 @@ document.addEventListener('DOMContentLoaded', () => {
     const totalGood1  = mState.m1.inputOne + mState.m2.inputOne;
     const totalTarget = mState.m1.target + mState.m2.target;
 
-    // Reject di form sekarang (belum disubmit)
-    const rejectForm = REJECT_TYPES.reduce((s, r) => s + (rVal[r.key] || 0), 0);
-
-    // Total reject yang ditampilkan = sudah disubmit + form sekarang
+    const rejectForm  = REJECT_TYPES.reduce((s, r) => s + (rVal[r.key] || 0), 0);
     const totalReject = totalSubmittedReject + rejectForm;
+    const netGood     = Math.max(0, totalGood1 - totalReject);
+    const goodBersih  = netGood;
 
-    // Net good = Good(1) - semua reject (sudah submit + form sekarang)
-    const netGood    = Math.max(0, totalGood1 - totalReject);
-    const goodBersih = netGood;
-
-    // QR = Good(1) / Produksi x 100
+    // QR = Good(1) / Produksi × 100
     const qr = totalProd > 0
       ? Math.min((totalGood1 / totalProd) * 100, 100).toFixed(2)
       : '0.00';
 
-    // PR = (netGood x 2.222s) / Runtime_detik x 100
+    // PR = (netGood × cycle time paralel) / runtime × 100
     const actualRuntimeMs = Math.max(mState.m1.runtime || 0, mState.m2.runtime || 0);
     const runtimeSec = actualRuntimeMs / 1000;
     const pr = runtimeSec > 0
-      ? Math.min(((netGood * (MS_PER_PCS / 1000)) / runtimeSec) * 100, 100).toFixed(2)
+      ? Math.min(((netGood * (MS_PER_PCS_PARALEL / 1000)) / runtimeSec) * 100, 100).toFixed(2)
       : '0.00';
 
     return { totalProd, totalGood1, totalTarget, totalReject, rejectForm, netGood, goodBersih, qr, pr };
@@ -70,28 +90,24 @@ document.addEventListener('DOMContentLoaded', () => {
   function updateDisplay() {
     const d = derived();
 
-    // Stat cards atas
     setText('disp-produksi', d.totalProd);
     setText('disp-target',   d.totalTarget);
-    setText('disp-good',     d.netGood);      // Real-time: Good(1) - totalReject
-    setText('disp-reject',   d.totalReject);  // Real-time: total semua rVal
+    setText('disp-good',     d.netGood);
+    setText('disp-reject',   d.totalReject);
+    setText('sum-reject',    d.totalReject);
+    setText('sum-good-net',  d.netGood);
 
-    // Summary strip bawah reject list
-    setText('sum-reject',   d.totalReject);
-    setText('sum-good-net', d.netGood);
-
-    // Nilai per baris reject
     REJECT_TYPES.forEach(r => {
       const e = el('rv-' + r.elId);
       if (e) e.innerText = rVal[r.key] || 0;
     });
 
-    // Breakdown bars & chart
     renderBreakdown(d.totalReject);
     updateChart();
+    saveState();
   }
 
-  // ── Breakdown progress bars ───────────────────────────────
+  // ── Breakdown bars ────────────────────────────────────────
   function renderBreakdown(totalReject) {
     const container = el('breakdown-container');
     if (!container) return;
@@ -166,33 +182,29 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     const tdBase = 'padding:10px 12px;border-bottom:1px solid rgba(255,255,255,.04);font-family:"DM Mono",monospace;font-size:12px;';
-
     const detailColors = {
-      'Kosong': '#f87171', 'Coding': '#fb923c', 'Seal': '#fbbf24',
-      'Kurang Angin': '#a78bfa', 'Gramasi Unstandart': '#60a5fa', 'Lain-lain': '#4ade80'
+      'Kosong':'#f87171','Coding':'#fb923c','Seal':'#fbbf24',
+      'Kurang Angin':'#a78bfa','Gramasi Unstandart':'#60a5fa','Lain-lain':'#4ade80'
     };
 
     tbody.innerHTML = hist.map((rec, i) => {
-      const realIdx = hist.length - 1 - i;
-      const rowNum  = hist.length - i;
+      const realIdx  = hist.length - 1 - i;
+      const rowNum   = hist.length - i;
       const detailId = `detail-row-${realIdx}`;
 
-      // Buat breakdown detail per jenis reject
       const detailHtml = rec.detail
-        ? Object.entries(rec.detail)
-            .filter(([k, v]) => v > 0)
-            .map(([k, v]) => {
-              const pct = rec.totalReject > 0 ? ((v / rec.totalReject) * 100).toFixed(0) : 0;
-              const c   = detailColors[k] || '#d6d3d1';
-              return `<div style="display:flex;align-items:center;gap:8px;margin-bottom:5px">
-                <div style="width:110px;font-family:'DM Mono',monospace;font-size:10px;color:${c}">${k}</div>
-                <div style="flex:1;background:rgba(255,255,255,.05);border-radius:4px;height:6px;overflow:hidden">
-                  <div style="width:${pct}%;height:100%;background:${c};border-radius:4px"></div>
-                </div>
-                <div style="width:35px;text-align:right;font-family:'DM Mono',monospace;font-size:11px;color:${c}">${v}</div>
-                <div style="width:35px;text-align:right;font-family:'DM Mono',monospace;font-size:10px;color:#57534e">${pct}%</div>
-              </div>`;
-            }).join('')
+        ? Object.entries(rec.detail).filter(([k,v]) => v > 0).map(([k,v]) => {
+            const pct = rec.totalReject > 0 ? ((v/rec.totalReject)*100).toFixed(0) : 0;
+            const c   = detailColors[k] || '#d6d3d1';
+            return `<div style="display:flex;align-items:center;gap:8px;margin-bottom:5px">
+              <div style="width:110px;font-family:'DM Mono',monospace;font-size:10px;color:${c}">${k}</div>
+              <div style="flex:1;background:rgba(255,255,255,.05);border-radius:4px;height:6px;overflow:hidden">
+                <div style="width:${pct}%;height:100%;background:${c};border-radius:4px"></div>
+              </div>
+              <div style="width:35px;text-align:right;font-family:'DM Mono',monospace;font-size:11px;color:${c}">${v}</div>
+              <div style="width:35px;text-align:right;font-family:'DM Mono',monospace;font-size:10px;color:#57534e">${pct}%</div>
+            </div>`;
+          }).join('')
         : '<div style="font-family:DM Mono,monospace;font-size:11px;color:#57534e">Tidak ada data detail</div>';
 
       const hasDetail = rec.detail && Object.values(rec.detail).some(v => v > 0);
@@ -261,7 +273,6 @@ document.addEventListener('DOMContentLoaded', () => {
     }).join('');
   }
 
-  // Toggle baris detail breakdown reject
   window.toggleDetail = function (detailId) {
     const row = document.getElementById(detailId);
     const btn = document.getElementById('btn-' + detailId);
@@ -296,16 +307,14 @@ document.addEventListener('DOMContentLoaded', () => {
       return;
     }
 
-    // Cari jenis reject terbanyak
     let biggestReject = '-', biggestVal = 0;
     REJECT_TYPES.forEach(r => {
       if ((rVal[r.key] || 0) > biggestVal) {
-        biggestVal = rVal[r.key] || 0;
+        biggestVal    = rVal[r.key] || 0;
         biggestReject = r.key;
       }
     });
 
-    // Simpan snapshot data SEBELUM reset
     const record = {
       time:          new Date().toLocaleString('id-ID'),
       totalProd:     d.totalProd,
@@ -320,28 +329,19 @@ document.addEventListener('DOMContentLoaded', () => {
       detail:        { ...rVal },
     };
 
-    // Simpan ke localStorage
     hist.unshift(record);
     localStorage.setItem('reject_pkg_hist', JSON.stringify(hist));
 
-    // Kirim ke MQTT agar dashboard update OEE
     if (typeof mqttClient !== 'undefined' && mqttClient.connected) {
       mqttClient.publish('oee/reject/data', JSON.stringify(record), { retain: false });
       console.log('📤 Reject data published');
     }
 
-    // Akumulasi totalSubmittedReject SEBELUM reset form
     totalSubmittedReject += d.rejectForm;
-
-    // RESET semua input form reject ke 0
     REJECT_TYPES.forEach(r => { rVal[r.key] = 0; });
 
-    // Update riwayat dan tampilan
-    // - disp-reject tetap menunjukkan totalSubmittedReject (tidak kembali ke 0)
-    // - disp-good tetap berkurang sesuai total reject
     renderHistory();
     updateDisplay();
-
     showToast('✓ Tersimpan! Input direset ke 0', '#4ade80');
   };
 
@@ -352,15 +352,12 @@ document.addEventListener('DOMContentLoaded', () => {
       '• Total Produksi, Good, Target → 0\n' +
       '• Nilai akan sinkron kembali dari mesin')) return;
 
-    // Reset semua input reject
     REJECT_TYPES.forEach(r => { rVal[r.key] = 0; });
-
-    // Reset semua nilai mesin (Produksi, Good, Target)
     mState.m1 = { inputOne: 0, inputZero: 0, target: 0, runtime: 0 };
     mState.m2 = { inputOne: 0, inputZero: 0, target: 0, runtime: 0 };
-
-    // Reset total reject yang sudah disubmit
     totalSubmittedReject = 0;
+
+    try { localStorage.removeItem(STORAGE_KEY); } catch(e) {}
 
     updateDisplay();
     showToast('✓ Semua nilai direset ke 0', '#f87171');
@@ -405,14 +402,11 @@ document.addEventListener('DOMContentLoaded', () => {
   };
 
   window.numpadConfirm = function () {
-    if (npTarget) {
-      rVal[npTarget] = parseInt(npBuffer) || 0;
-    }
+    if (npTarget) rVal[npTarget] = parseInt(npBuffer) || 0;
     closeNumpad();
-    updateDisplay(); // Langsung update semua tampilan setelah input angka
+    updateDisplay();
   };
 
-  // Keyboard support saat numpad terbuka
   document.addEventListener('keydown', e => {
     if (!numpadModal?.classList.contains('active')) return;
     if (e.key >= '0' && e.key <= '9') numpadPress(e.key);
@@ -426,36 +420,51 @@ document.addEventListener('DOMContentLoaded', () => {
   const mqttClient = mqtt.connect('wss://broker.hivemq.com:8884/mqtt');
 
   mqttClient.on('connect', () => {
-    console.log('MQTT Connected (Reject Packaging)');
+    console.log('✅ MQTT Connected (Reject Packaging)');
     setMqttStatus('Connected', '#4ade80');
+
+    // Subscribe count, target, runtime, reset seperti biasa
     [
       'oee/machine1/count',   'oee/machine2/count',
       'oee/machine1/target',  'oee/machine2/target',
       'oee/machine1/runtime', 'oee/machine2/runtime',
       'oee/machine1/reset',   'oee/machine2/reset',
     ].forEach(t => mqttClient.subscribe(t));
-    mqttClient.subscribe('oee/reject/total'); // Sinkron total reject dari dashboard (retained)
+
+    // oee/reject/total — retained, langsung diterima saat connect
+    // digunakan untuk sinkron totalSubmittedReject ke nilai terkini di dashboard
+    mqttClient.subscribe('oee/reject/total');
+
+    // ── SYNC REALTIME: minta nilai terkini dari dashboard ──
+    // Target & runtime dikirim as retained dari controle.js,
+    // sehingga langsung diterima begitu subscribe tanpa perlu request manual
+    console.log('[Reject] Subscribed — menunggu retained topics untuk sync awal');
   });
 
   mqttClient.on('error',     () => setMqttStatus('Error',        '#f87171'));
   mqttClient.on('reconnect', () => setMqttStatus('Reconnecting', '#fb923c'));
   mqttClient.on('offline',   () => {
     setMqttStatus('Offline', '#f87171');
-    mState.m1 = { inputOne:0, inputZero:0, target:0, runtime:0 };
-    mState.m2 = { inputOne:0, inputZero:0, target:0, runtime:0 };
+    // Saat offline, tampilkan data dari localStorage (tidak reset)
     updateDisplay();
   });
 
   mqttClient.on('message', (topic, message) => {
     const p = message.toString().trim();
 
-    // Sinkron total reject dari dashboard — update disp-good secara real-time
+    // ── oee/reject/total: retained → sinkron totalSubmittedReject ──
+    // Ini adalah sumber kebenaran dari dashboard, override localStorage jika berbeda
     if (topic === 'oee/reject/total') {
-      totalSubmittedReject = parseInt(p) || 0;
-      updateDisplay();
+      const val = parseInt(p) || 0;
+      if (val !== totalSubmittedReject) {
+        totalSubmittedReject = val;
+        saveState();
+        updateDisplay();
+      }
       return;
     }
 
+    // ── Count realtime ──
     if (topic === 'oee/machine1/count') {
       if (p === '1') mState.m1.inputOne++; else mState.m1.inputZero++;
       updateDisplay();
@@ -464,21 +473,29 @@ document.addEventListener('DOMContentLoaded', () => {
       if (p === '1') mState.m2.inputOne++; else mState.m2.inputZero++;
       updateDisplay();
     }
+
+    // ── Target & runtime: retained → langsung sync saat buka halaman ──
     if (topic === 'oee/machine1/target')  { mState.m1.target  = parseInt(p) || 0; updateDisplay(); }
     if (topic === 'oee/machine2/target')  { mState.m2.target  = parseInt(p) || 0; updateDisplay(); }
     if (topic === 'oee/machine1/runtime') { mState.m1.runtime = parseInt(p) || 0; updateDisplay(); }
     if (topic === 'oee/machine2/runtime') { mState.m2.runtime = parseInt(p) || 0; updateDisplay(); }
+
+    // ── Reset ──
     if (topic === 'oee/machine1/reset') {
-      mState.m1 = { inputOne:0, inputZero:0, target:0, runtime:0 };
+      mState.m1 = { inputOne: 0, inputZero: 0, target: 0, runtime: 0 };
       REJECT_TYPES.forEach(r => { rVal[r.key] = 0; });
-      totalSubmittedReject = 0; // Reset sinkron dengan dashboard
+      totalSubmittedReject = 0;
+      try { localStorage.removeItem(STORAGE_KEY); } catch(e) {}
       updateDisplay();
+      showToast('↺ Mesin 1 direset', '#fb923c');
     }
     if (topic === 'oee/machine2/reset') {
-      mState.m2 = { inputOne:0, inputZero:0, target:0, runtime:0 };
+      mState.m2 = { inputOne: 0, inputZero: 0, target: 0, runtime: 0 };
       REJECT_TYPES.forEach(r => { rVal[r.key] = 0; });
-      totalSubmittedReject = 0; // Reset sinkron dengan dashboard
+      totalSubmittedReject = 0;
+      try { localStorage.removeItem(STORAGE_KEY); } catch(e) {}
       updateDisplay();
+      showToast('↺ Mesin 2 direset', '#fb923c');
     }
   });
 
@@ -499,13 +516,15 @@ document.addEventListener('DOMContentLoaded', () => {
     setTimeout(() => t.classList.remove('show'), 3000);
   }
 
+  // Auto-save setiap 10 detik
+  setInterval(saveState, 10000);
+
   // ══ INIT ══════════════════════════════════════════════════
   initChart();
   renderHistory();
   updateDisplay();
 
-  console.log('Reject.packaging.js loaded');
-  console.log('Submit: simpan record -> reset rVal ke 0 -> updateDisplay()');
-  console.log('disp-good   = Good(1) - totalReject  (real-time)');
-  console.log('disp-reject = sum(rVal)               (real-time)');
+  console.log('✅ reject.js loaded — persist + realtime sync aktif');
+  console.log('localStorage key:', STORAGE_KEY);
+  console.log('Sync: oee/reject/total (retained) override totalSubmittedReject saat connect');
 });
