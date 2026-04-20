@@ -26,7 +26,6 @@
 
   <main class="max-w-7xl mx-auto px-6 py-6 space-y-6">
 
-    <!-- SETUP PRODUKSI -->
     <section class="bg-white/5 border border-white/10 backdrop-blur rounded-2xl p-6">
       <h2 class="text-lg font-semibold mb-4">⚙️ Setup Produksi</h2>
       <div class="grid grid-cols-1 md:grid-cols-5 gap-4">
@@ -51,7 +50,6 @@
         </button>
       </div>
 
-      <!-- INFO BAR: tampil setelah Simpan Setup -->
       <div id="setup-info-bar"
         style="display:none; margin-top:16px; padding:12px 18px;
                background:rgba(99,179,113,0.07); border:1px solid rgba(99,179,113,0.18);
@@ -94,7 +92,6 @@
       </div>
     </section>
 
-    <!-- MONITORING -->
     <section class="grid grid-cols-1 md:grid-cols-4 gap-6">
       <div class="bg-white/5 border border-white/10 rounded-2xl p-5">
         <p class="text-sm text-gray-400">Total Target</p>
@@ -130,7 +127,6 @@
       </div>
     </section>
 
-    <!-- KONTROL -->
     <section class="bg-white/5 border border-white/10 rounded-2xl p-6">
       <h2 class="text-lg font-semibold mb-4">🎛 Kontrol Sensor</h2>
 
@@ -175,14 +171,12 @@
       </div>
     </section>
 
-    <!-- LOG DOWNTIME -->
     <div id="dt-log-wrap" style="display:none; margin:0; max-width:100%;
          border:1px solid rgba(255,255,255,.06); border-radius:12px; overflow:hidden; overflow-x:auto;">
     </div>
 
   </main>
 
-  <!-- POPUP DOWNTIME -->
   <div id="popup-downtime"
     style="display:flex; position:fixed; inset:0; z-index:9999;
            background:rgba(0,0,0,.65); backdrop-filter:blur(6px);
@@ -250,7 +244,6 @@
     </div>
   </div>
 
-  <!-- TOAST -->
   <div id="dt-toast"
     style="position:fixed; bottom:24px; left:50%;
            transform:translateX(-50%) translateY(16px);
@@ -261,7 +254,6 @@
            box-shadow:0 8px 32px rgba(0,0,0,.5); pointer-events:none;">
   </div>
 
-  <!-- NUMPAD MODAL -->
   <div id="numpadModal"
     class="hidden fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm">
     <div class="bg-slate-900 border border-white/10 rounded-3xl p-6 w-80 shadow-2xl">

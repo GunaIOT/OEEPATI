@@ -1,10 +1,3 @@
--- ═══════════════════════════════════════════════════════════════
--- OEE Production Sessions — Schema Final
--- ═══════════════════════════════════════════════════════════════
--- Jalankan file ini di phpMyAdmin atau MySQL CLI di laptop B
--- (192.168.3.198) dengan user ikra / ikra123
--- ═══════════════════════════════════════════════════════════════
-
 CREATE DATABASE IF NOT EXISTS oee_production
   CHARACTER SET utf8mb4
   COLLATE utf8mb4_unicode_ci;
@@ -14,7 +7,7 @@ CREATE TABLE IF NOT EXISTS production_sessions (
   id                   INT UNSIGNED  NOT NULL AUTO_INCREMENT,
   tgl_produksi         DATE          NOT NULL ,
   shift                TINYINT       NOT NULL DEFAULT 1,
-  product              VARCHAR(100)  NOT NULL DEFAULT ,
+  product              VARCHAR(100)  NOT NULL DEFAULT '',
   session_start        DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP ,
   last_updated         DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP
                                      ON UPDATE CURRENT_TIMESTAMP ,

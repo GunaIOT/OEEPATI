@@ -1,32 +1,9 @@
-// dashboard.js — OEE Dashboard
-// ════════════════════════════════════════════════════════
-// LOGIKA DATABASE (FIXED v3 — BENAR):
-//
-//  URUTAN KERJA GANTI SHIFT:
-//    1. Restart ESP32  → finalize row lama (PUT) → INSERT row BARU (id=2) langsung
-//    2. Reset          → clear tampilan/lokal SAJA, dbSessionId tetap id=2
-//    3. Isi shift/produk → Simpan Setup → UPDATE id=2 dengan shift & produk
-//
-//  ATURAN INSERT/UPDATE:
-//    - INSERT terjadi HANYA di handleRestarted() → dipicu btnRestartESP
-//    - UPDATE terjadi di handler setup-info → dipicu btnSaveSetup
-//    - Reset TIDAK memicu INSERT apapun, dbSessionId tidak diubah
-//
-//  FIX v3 vs v2:
-//    - handleRestarted() sekarang langsung INSERT row baru setelah finalize
-//    - awaitingNewSetup dihapus — tidak perlu lagi karena INSERT terjadi di restart
-//    - Handler setup-info hanya UPDATE (bukan INSERT), kecuali sesi belum ada sama sekali
-//    - Reset tidak menyentuh dbSessionId sama sekali
-// ════════════════════════════════════════════════════════
-
 const MS_PER_PCS         = 2069;
 const MS_PER_PCS_PARALEL = 1034;
 const POPUP_LIMIT        = 3  * 60 * 1000;
 const BREAKDOWN_LIMIT    = 10 * 60 * 1000;
+const RESET_SAVE_DELAY   = 5000;
 
-// ════════════════════════════════════════════════════════
-// SETUP INFO — shift & produk dari masing-masing control
-// ════════════════════════════════════════════════════════
 let setupInfo1 = { shift: 1, product: '-', date: new Date().toISOString().split('T')[0] };
 let setupInfo2 = { shift: 1, product: '-', date: new Date().toISOString().split('T')[0] };
 
@@ -61,9 +38,6 @@ function renderSetupInfo() {
   if (elProd)  elProd.innerText  = prod1;
 }
 
-// ════════════════════════════════════════════════════════
-// PERSIST STATE — localStorage untuk dashboard
-// ════════════════════════════════════════════════════════
 const STORAGE_KEY_DASH = 'oee_dashboard_state';
 
 function saveDashState() {
@@ -140,25 +114,11 @@ function loadDashState() {
   } catch(e) { console.warn('[Dashboard] Gagal load state:', e); }
 }
 
-function clearDashState1() {
+function clearDashStateAll() {
   try {
-    const raw = localStorage.getItem(STORAGE_KEY_DASH);
-    if (!raw) return;
-    const snap = JSON.parse(raw);
-    snap.state1 = null;
-    snap.totalRejectFromPackaging = 0;
-    localStorage.setItem(STORAGE_KEY_DASH, JSON.stringify(snap));
-  } catch(e) {}
-}
-
-function clearDashState2() {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY_DASH);
-    if (!raw) return;
-    const snap = JSON.parse(raw);
-    snap.state2 = null;
-    snap.totalRejectFromPackaging = 0;
-    localStorage.setItem(STORAGE_KEY_DASH, JSON.stringify(snap));
+    localStorage.removeItem(STORAGE_KEY_DASH);
+    localStorage.removeItem('oee_mesin1_state');
+    localStorage.removeItem('oee_mesin2_state');
   } catch(e) {}
 }
 
@@ -176,10 +136,16 @@ let sensor1Enabled           = false;
 let sensor2Enabled           = false;
 let totalRejectFromPackaging = 0;
 
-// Load state sebelum apapun dirender
+let _resetInProgress = false;
+
+const resetFlags = { m1: false, m2: false };
+
+function bothReset() {
+  return resetFlags.m1 && resetFlags.m2;
+}
+
 loadDashState();
 
-// ── Helper: ms → HH:MM:SS ──────────────────────────────────
 function formatTime(ms) {
   if (!ms || ms < 0) return '00:00:00';
   const s = Math.floor(ms / 1000);
@@ -324,21 +290,171 @@ function setMachineStatus(num, online) {
   }
 }
 
-function showResetNotification(name) {
-  let n = document.getElementById('reset-notif');
+function showResetCountdown(machineName, onComplete) {
+  if (_resetInProgress) {
+    console.warn('[Dashboard] Reset sudah berjalan, skip duplikat');
+    return;
+  }
+  _resetInProgress = true;
+
+  let remaining = Math.ceil(RESET_SAVE_DELAY / 1000);
+
+  let n = document.getElementById('reset-countdown-notif');
   if (n) n.remove();
   n = document.createElement('div');
-  n.id = 'reset-notif';
-  n.style.cssText = 'position:fixed;top:20px;right:20px;z-index:9999;background:#13171f;border:1px solid rgba(197,168,96,0.3);border-radius:12px;padding:14px 20px;display:flex;align-items:center;gap:12px;animation:fadeUp 0.4s ease';
-  n.innerHTML = `<span style="font-size:18px">🔄</span><div>
-    <div style="font-family:DM Mono,monospace;font-size:10px;letter-spacing:0.12em;color:#c5a860;text-transform:uppercase">System Reset</div>
-    <div style="font-size:12px;color:#7a7870;margin-top:2px">Data ${name} telah direset</div>
-  </div>`;
+  n.id = 'reset-countdown-notif';
+  n.style.cssText =
+    'position:fixed;top:20px;left:50%;transform:translateX(-50%);z-index:9999;' +
+    'background:#13171f;border:1px solid rgba(197,168,96,0.4);border-radius:12px;' +
+    'padding:14px 24px;display:flex;align-items:center;gap:14px;min-width:320px;' +
+    'box-shadow:0 0 30px rgba(197,168,96,0.12)';
   document.body.appendChild(n);
-  setTimeout(() => n?.remove(), 5000);
+
+  function updateNotif(sec) {
+    n.innerHTML = `
+      <span style="font-size:22px">💾</span>
+      <div style="flex:1">
+        <div style="font-family:DM Mono,monospace;font-size:10px;letter-spacing:0.12em;color:#c5a860;text-transform:uppercase">
+          Menyimpan data ${machineName}...
+        </div>
+        <div style="font-size:12px;color:#7a7870;margin-top:3px">
+          Tampilan akan di-reset dalam <strong style="color:#e2ddd5">${sec} detik</strong>
+        </div>
+        <div style="margin-top:8px;height:3px;background:rgba(255,255,255,0.06);border-radius:2px;overflow:hidden">
+          <div id="reset-cd-bar" style="height:100%;border-radius:2px;background:#c5a860;
+            transition:width ${RESET_SAVE_DELAY}ms linear;width:100%"></div>
+        </div>
+      </div>`;
+    requestAnimationFrame(() => {
+      const bar = document.getElementById('reset-cd-bar');
+      if (bar) { requestAnimationFrame(() => { bar.style.width = '0%'; }); }
+    });
+  }
+
+  updateNotif(remaining);
+
+  const tick = setInterval(() => {
+    remaining--;
+    if (remaining > 0) {
+      const textEl = n.querySelector('strong');
+      if (textEl) textEl.innerText = remaining + ' detik';
+    }
+  }, 1000);
+
+  setTimeout(() => {
+    clearInterval(tick);
+    n.remove();
+    _resetInProgress = false;
+    onComplete();
+  }, RESET_SAVE_DELAY);
 }
 
-// ══ MQTT ══════════════════════════════════════════════════
+let _pendingInsert = false;
+
+async function handleBothReset() {
+  if (_resetInProgress) {
+    console.warn('[Dashboard] handleBothReset diabaikan — sedang berjalan');
+    return;
+  }
+  console.log('[Dashboard DB] Kedua mesin reset → simpan data lama → clear tampilan');
+  if (_dbUpdateTimer)  { clearTimeout(_dbUpdateTimer);  _dbUpdateTimer  = null; }
+  if (_dtUpdateTimer)  { clearTimeout(_dtUpdateTimer);  _dtUpdateTimer  = null; }
+
+  await Promise.all([
+    dbUpdateSessionNow(),
+    dtUpdateSessionNow(),
+  ]);
+  console.log(`[Dashboard DB] Data production id=${dbSessionId} & downtime id=${dtSessionId} tersimpan`);
+ 
+  hideWaitingResetNotif();
+ 
+  showResetCountdown('Kedua Mesin', async () => {
+    clearMachineState('both');
+
+    _pendingInsert = true;
+    resetFlags.m1  = false;
+    resetFlags.m2  = false;
+    dbSessionId    = null;
+    localStorage.removeItem(DB_SESSION_KEY);
+
+    dtSessionId = null;
+    localStorage.removeItem(DT_SESSION_KEY);
+ 
+    console.log('[Dashboard DB] Clear selesai — downtime sesi baru id=' + dtSessionId);
+    showSetupNeededNotif();
+  });
+}
+
+function showWaitingResetNotif(firstMachineNum) {
+  hideWaitingResetNotif();
+  const waitNum = firstMachineNum === 1 ? 2 : 1;
+  const n = document.createElement('div');
+  n.id = 'waiting-reset-notif';
+  n.style.cssText =
+    'position:fixed;top:20px;left:50%;transform:translateX(-50%);z-index:9999;' +
+    'background:#13171f;border:1px solid rgba(96,165,250,0.4);border-radius:12px;' +
+    'padding:14px 24px;display:flex;align-items:center;gap:12px;' +
+    'box-shadow:0 0 30px rgba(96,165,250,0.15)';
+  n.innerHTML = `<span style="font-size:18px">⏳</span><div>
+    <div style="font-family:DM Mono,monospace;font-size:10px;letter-spacing:0.12em;color:#60a5fa;text-transform:uppercase">
+      Mesin ${firstMachineNum} sudah di-reset
+    </div>
+    <div style="font-size:12px;color:#7a7870;margin-top:3px">
+      Menunggu Reset Mesin ${waitNum} — data belum disimpan
+    </div>
+  </div>`;
+  document.body.appendChild(n);
+}
+
+function hideWaitingResetNotif() {
+  document.getElementById('waiting-reset-notif')?.remove();
+}
+
+function showSetupNeededNotif() {
+  document.getElementById('setup-needed-notif')?.remove();
+  const n = document.createElement('div');
+  n.id = 'setup-needed-notif';
+  n.style.cssText =
+    'position:fixed;top:20px;left:50%;transform:translateX(-50%);z-index:9999;' +
+    'background:#13171f;border:1px solid rgba(251,146,60,0.4);border-radius:12px;' +
+    'padding:14px 24px;display:flex;align-items:center;gap:12px;' +
+    'box-shadow:0 0 30px rgba(251,146,60,0.15)';
+  n.innerHTML = `<span style="font-size:18px">📋</span><div>
+    <div style="font-family:DM Mono,monospace;font-size:10px;letter-spacing:0.12em;color:#fb923c;text-transform:uppercase">
+      Data lama tersimpan — id baru siap
+    </div>
+    <div style="font-size:12px;color:#7a7870;margin-top:3px">
+      Silakan isi shift &amp; produk, lalu tekan Simpan Setup
+    </div>
+  </div>
+  <button onclick="document.getElementById('setup-needed-notif').remove()"
+    style="margin-left:8px;background:none;border:none;color:#57534e;cursor:pointer;font-size:16px;padding:4px">✕</button>`;
+  document.body.appendChild(n);
+}
+
+function clearMachineState(machineNum) {
+  if (machineNum === 1 || machineNum === 'both') {
+    clearInterval(state1._liveTimer);
+    Object.assign(state1, makeState());
+    sensor1Enabled = false;
+    setMachineStatus(1, false);
+  }
+  if (machineNum === 2 || machineNum === 'both') {
+    clearInterval(state2._liveTimer);
+    Object.assign(state2, makeState());
+    sensor2Enabled = false;
+    setMachineStatus(2, false);
+  }
+  if (machineNum === 'both') {
+    totalRejectFromPackaging = 0;
+    mqttClient.publish('oee/reject/total', '0', { retain: true });
+  }
+  clearDashStateAll();
+  updateDisplay1();
+  updateDisplay2();
+  console.log(`[Dashboard] State mesin ${machineNum} di-clear`);
+}
+
 const mqttClient = mqtt.connect('wss://broker.hivemq.com:8884/mqtt');
 
 mqttClient.on('connect', () => {
@@ -371,28 +487,19 @@ mqttClient.on('offline',   () => {
 mqttClient.on('message', async (topic, message) => {
   const payload = message.toString().trim();
 
-  // ══════════════════════════════════════════════════════════
-  // RESTART SIGNAL — SATU-SATUNYA titik INSERT row baru
-  // ══════════════════════════════════════════════════════════
   if (topic === 'oee/machine1/restarted') {
     if (payload !== '1') return;
-    console.log('[Dashboard DB] Sinyal restart M1 → INSERT row baru');
-    mqttClient.publish('oee/machine1/restarted', '', { retain: true }); // clear retained
-    await handleRestarted(1);
+    mqttClient.publish('oee/machine1/restarted', '', { retain: true, qos: 1 });
+    console.log('[Dashboard] ESP32 M1 restart — retained cleared');
     return;
   }
   if (topic === 'oee/machine2/restarted') {
     if (payload !== '1') return;
-    console.log('[Dashboard DB] Sinyal restart M2 → INSERT row baru');
-    mqttClient.publish('oee/machine2/restarted', '', { retain: true }); // clear retained
-    await handleRestarted(2);
+    mqttClient.publish('oee/machine2/restarted', '', { retain: true, qos: 1 });
+    console.log('[Dashboard] ESP32 M2 restart — retained cleared');
     return;
   }
 
-  // ══════════════════════════════════════════════════════════
-  // SETUP INFO — hanya UPDATE row yang sudah ada
-  // INSERT hanya jika pertama kali buka dashboard (tidak ada session)
-  // ══════════════════════════════════════════════════════════
   if (topic === 'oee/machine1/setup-info') {
     try {
       const info = JSON.parse(payload);
@@ -402,19 +509,24 @@ mqttClient.on('message', async (topic, message) => {
         date:    info.date    || new Date().toISOString().split('T')[0],
       };
       renderSetupInfo();
-      console.log('[Dashboard] Setup M1:', setupInfo1);
-      if (dbSessionId) {
-        console.log(`[Dashboard DB] UPDATE id=${dbSessionId} — shift=${setupInfo1.shift} produk="${setupInfo1.product}"`);
-        hideRestartWaitNotif();
-        dbUpdateSession();
-      } else {
-        console.log('[Dashboard DB] Tidak ada session — INSERT pertama kali (setup M1)');
+      if (!dtSessionId) {
+        await dtInsertSession();
+      }
+      
+      if (_pendingInsert) {
+        _pendingInsert = false;
+        console.log(`[Dashboard DB] INSERT id baru — shift=${setupInfo1.shift} produk="${setupInfo1.product}"`);
+        document.getElementById('setup-needed-notif')?.remove();
         await dbInsertSession();
+        console.log(`[Dashboard DB] ✅ INSERT id baru=${dbSessionId}`);
+      } else if (dbSessionId) {
+        console.log(`[Dashboard DB] UPDATE id=${dbSessionId} — setup M1`);
+        document.getElementById('setup-needed-notif')?.remove();
+        dbUpdateSession();
       }
     } catch(e) { console.warn('⚠️ setup-info M1 parse error:', e); }
     return;
   }
-
   if (topic === 'oee/machine2/setup-info') {
     try {
       const info = JSON.parse(payload);
@@ -424,19 +536,14 @@ mqttClient.on('message', async (topic, message) => {
         date:    info.date    || new Date().toISOString().split('T')[0],
       };
       renderSetupInfo();
-      console.log('[Dashboard] Setup M2:', setupInfo2);
       if (dbSessionId) {
         console.log(`[Dashboard DB] UPDATE id=${dbSessionId} — setup M2`);
         dbUpdateSession();
-      } else {
-        console.log('[Dashboard DB] Tidak ada session — INSERT pertama kali (setup M2)');
-        await dbInsertSession();
       }
     } catch(e) { console.warn('⚠️ setup-info M2 parse error:', e); }
     return;
   }
 
-  // ══ MESIN 1 ══════════════════════════════════════════════
   if (topic === 'oee/machine1/relay-status') {
     sensor1Enabled = (payload === 'ON');
     saveDashState();
@@ -457,7 +564,6 @@ mqttClient.on('message', async (topic, message) => {
 
   if (topic === 'oee/machine1/downtime-start') {
     state1.inDowntime = true;
-    console.log('[M1] downtime-start received');
   }
 
   if (topic === 'oee/machine1/downtime') {
@@ -473,27 +579,13 @@ mqttClient.on('message', async (topic, message) => {
     } catch(e) { console.warn('⚠️ downtime parse error M1:', e); }
   }
 
-  // ── Reset M1 — clear lokal SAJA, dbSessionId TIDAK diubah ──
   if (topic === 'oee/machine1/reset') {
-    console.log('🔄 RESET Mesin 1 — save ke DB lalu clear lokal (dbSessionId tetap)');
-    if (_dbUpdateTimer) { clearTimeout(_dbUpdateTimer); _dbUpdateTimer = null; }
-    const _clearM1 = () => {
-      clearInterval(state1._liveTimer);
-      Object.assign(state1, makeState());
-      totalRejectFromPackaging = 0;
-      mqttClient.publish('oee/reject/total', '0', { retain: true });
-      clearDashState1();
-      sensor1Enabled = false;
-      try { localStorage.removeItem('oee_mesin1_state'); } catch(e) {}
-      setMachineStatus(1, false);
-      updateDisplay1();
-      showResetNotification('Mesin 1');
-      console.log(`[Dashboard DB] Reset M1 selesai — dbSessionId masih = ${dbSessionId}`);
-    };
-    dbUpdateSessionNow().then(() => _clearM1()).catch(() => _clearM1());
+    if (resetFlags.m1) { console.log('[Dashboard] M1 sudah reset — skip'); return; }
+    resetFlags.m1 = true;
+    if (bothReset()) { await handleBothReset(); }
+    else { showWaitingResetNotif(1); console.log('[Dashboard] Menunggu Reset M2...'); }
   }
 
-  // ══ MESIN 2 ══════════════════════════════════════════════
   if (topic === 'oee/machine2/relay-status') {
     sensor2Enabled = (payload === 'ON');
     saveDashState();
@@ -514,7 +606,6 @@ mqttClient.on('message', async (topic, message) => {
 
   if (topic === 'oee/machine2/downtime-start') {
     state2.inDowntime = true;
-    console.log('[M2] downtime-start received');
   }
 
   if (topic === 'oee/machine2/downtime') {
@@ -530,39 +621,23 @@ mqttClient.on('message', async (topic, message) => {
     } catch(e) { console.warn('⚠️ downtime parse error M2:', e); }
   }
 
-  // ── Reset M2 — clear lokal SAJA, dbSessionId TIDAK diubah ──
   if (topic === 'oee/machine2/reset') {
-    console.log('🔄 RESET Mesin 2 — save ke DB lalu clear lokal (dbSessionId tetap)');
-    if (_dbUpdateTimer) { clearTimeout(_dbUpdateTimer); _dbUpdateTimer = null; }
-    const _clearM2 = () => {
-      clearInterval(state2._liveTimer);
-      Object.assign(state2, makeState());
-      totalRejectFromPackaging = 0;
-      mqttClient.publish('oee/reject/total', '0', { retain: true });
-      clearDashState2();
-      sensor2Enabled = false;
-      try { localStorage.removeItem('oee_mesin2_state'); } catch(e) {}
-      setMachineStatus(2, false);
-      updateDisplay2();
-      showResetNotification('Mesin 2');
-      console.log(`[Dashboard DB] Reset M2 selesai — dbSessionId masih = ${dbSessionId}`);
-    };
-    dbUpdateSessionNow().then(() => _clearM2()).catch(() => _clearM2());
+    if (resetFlags.m2) { console.log('[Dashboard] M2 sudah reset — skip'); return; }
+    resetFlags.m2 = true;
+    if (bothReset()) { await handleBothReset(); }
+    else { showWaitingResetNotif(2); console.log('[Dashboard] Menunggu Reset M1...'); }
   }
 
-  // ══ SHARED DOWNTIME ════════════════════════════════════════
   if (topic === 'oee/shared-downtime') {
     try {
       const ev     = JSON.parse(payload);
       const durasi = ev.durasi_ms || 0;
       if (durasi > state1.downtimeAcc) state1.downtimeAcc = durasi;
       if (durasi > state2.downtimeAcc) state2.downtimeAcc = durasi;
-      console.log(`[Dashboard] Shared downtime SET ke ${(durasi/1000).toFixed(0)}s dari M${ev.dari_mesin}`);
       updateDisplay1(); updateDisplay2();
     } catch(e) { console.warn('⚠️ shared-downtime parse error:', e); }
   }
 
-  // ══ MINOR BREAKDOWN SYNC ═══════════════════════════════════
   if (topic === 'oee/machine1/minor') {
     try {
       const ev = JSON.parse(payload);
@@ -580,40 +655,27 @@ mqttClient.on('message', async (topic, message) => {
     } catch(e) {}
   }
 
-  // ══ REJECT SYNC ════════════════════════════════════════════
   if (topic === 'oee/reject/total') {
     const val = parseInt(payload) || 0;
     if (val !== totalRejectFromPackaging) {
+      console.log(`[Dashboard] Reject sync: ${totalRejectFromPackaging} → ${val}`);
       totalRejectFromPackaging = val;
-      updateSummary(); updateOEE();
+      updateSummary();
+      updateOEE();
+      saveDashState();
       dbUpdateSession();
     }
   }
+
   if (topic === 'oee/reject/data') {
     try {
       const rec = JSON.parse(payload);
-      if (typeof rec.totalReject === 'number') {
-        totalRejectFromPackaging += rec.totalReject;
-        mqttClient.publish('oee/reject/total', String(totalRejectFromPackaging), { retain: true });
-        updateSummary(); updateOEE(); updateTimestamp();
-        dbUpdateSession();
-      }
+      console.log(`[Dashboard] Reject data diterima — rejectThisSubmit=${rec.rejectThisSubmit} totalAkumulasi=${rec.totalReject}`);
     } catch(e) { console.warn('⚠️ Gagal parse reject data:', e); }
-  }
-
-  if (topic === 'oee/machine1/status' || topic === 'oee/machine2/status') {
-    if (payload === 'RESTARTING') {
-      const now = Date.now();
-      if (now - lastRestartSignal > 10000) {
-        lastRestartSignal = now;
-        setTimeout(() => window.location.reload(true), 5000);
-      }
-    }
   }
 });
 
-// ── Deteksi offline timeout 30 detik ──────────────────────
-let lastMsg1 = 0, lastMsg2 = 0, lastRestartSignal = 0;
+let lastMsg1 = 0, lastMsg2 = 0;
 
 setInterval(() => {
   const now = Date.now();
@@ -623,7 +685,6 @@ setInterval(() => {
 
 setInterval(saveDashState, 10000);
 
-// ══ OEE GAUGE ═════════════════════════════════════════════
 function drawGauge(canvasId, pct, color) {
   const canvas = el(canvasId);
   if (!canvas) return;
@@ -724,14 +785,12 @@ function updateOEE() {
   saveDashState();
 }
 
-// ════════════════════════════════════════════════════════════
-// DATABASE SESSION
-// ════════════════════════════════════════════════════════════
 const API_BASE       = `http://${window.location.hostname}:3000/api`;
 const DB_SESSION_KEY = 'oee_dashboard_session_id';
 
 let dbSessionId    = null;
 let dbSaveInterval = null;
+let _dbInsertLock  = false;
 
 function getDbPayload() {
   const totalTarget = (state1.totalTarget || 0) + (state2.totalTarget || 0);
@@ -757,6 +816,12 @@ function getDbPayload() {
 }
 
 async function dbInsertSession() {
+  if (_dbInsertLock) {
+    console.warn('[Dashboard DB] INSERT diabaikan — mutex aktif');
+    return;
+  }
+  _dbInsertLock = true;
+  localStorage.setItem(DB_SESSION_KEY, 'pending');
   try {
     const res  = await fetch(`${API_BASE}/session/start`, {
       method:  'POST',
@@ -767,22 +832,28 @@ async function dbInsertSession() {
     if (data.ok) {
       dbSessionId = data.session_id;
       localStorage.setItem(DB_SESSION_KEY, String(dbSessionId));
-      console.log(`[Dashboard DB] ✅ INSERT id=${dbSessionId}`);
+      console.log(`[Dashboard DB] ✅ INSERT sesi awal id=${dbSessionId}`);
       startDbSaveInterval();
     } else {
+      localStorage.removeItem(DB_SESSION_KEY);
       console.warn('[Dashboard DB] INSERT gagal:', data.error);
     }
   } catch(err) {
+    localStorage.removeItem(DB_SESSION_KEY);
     console.warn('[Dashboard DB] INSERT error:', err.message);
+  } finally {
+    _dbInsertLock = false;
   }
 }
 
 let _dbUpdateTimer = null;
 function dbUpdateSession() {
   if (!dbSessionId) return;
+  if (!_tabActive)  return;
   if (_dbUpdateTimer) return;
   _dbUpdateTimer = setTimeout(async () => {
     _dbUpdateTimer = null;
+    if (!_tabActive) return;
     try {
       const res  = await fetch(`${API_BASE}/session/${dbSessionId}`, {
         method:  'PUT',
@@ -799,6 +870,7 @@ function dbUpdateSession() {
 
 async function dbUpdateSessionNow() {
   if (!dbSessionId) return;
+  if (!_tabActive)  return;
   try {
     await fetch(`${API_BASE}/session/${dbSessionId}`, {
       method:    'PUT',
@@ -818,72 +890,171 @@ function startDbSaveInterval() {
   if (dbSaveInterval) clearInterval(dbSaveInterval);
   dbSaveInterval = setInterval(dbUpdateSession, 60 * 1000);
 }
-
-// ════════════════════════════════════════════════════════════
-// RESTART HANDLER — finalize row lama + INSERT row baru
-// INSERT terjadi langsung di sini saat restart diterima
-// Reset TIDAK memanggil fungsi ini
-// ════════════════════════════════════════════════════════════
-async function handleRestarted(machineNum) {
-  console.log(`[Dashboard DB] Restart M${machineNum} — finalize row lama → INSERT row baru`);
-  if (_dbUpdateTimer) { clearTimeout(_dbUpdateTimer); _dbUpdateTimer = null; }
-
-  // Finalize row lama
-  if (dbSessionId) {
-    await dbUpdateSessionNow();
-    console.log(`[Dashboard DB] Row id=${dbSessionId} di-finalize`);
+const DT_SESSION_KEY = 'oee_downtime_session_id';
+let dtSessionId = null;
+let _dtUpdateTimer = null;
+ 
+function getDtPayload() {
+  const avgSetupMs  = ((state1.setupTime || 0) + (state2.setupTime || 0)) / 2;
+  const totalDtMs   = (state1.downtimeAcc || 0) + (state2.downtimeAcc || 0);
+  const mbLiveM1    = (state1.minorBreakdownAcc || 0) + getWatchTotal(state1);
+  const mbLiveM2    = (state2.minorBreakdownAcc || 0) + getWatchTotal(state2);
+  const avgMinorMs  = (mbLiveM1 + mbLiveM2) / 2;
+  return {
+    tgl_produksi:     setupInfo1.date    || new Date().toISOString().split('T')[0],
+    shift:            setupInfo1.shift   || 1,
+    product:          setupInfo1.product || '-',
+    total_minor_ms:   Math.round(avgMinorMs),
+    total_setup_ms:   Math.round(avgSetupMs),
+    total_downtime_ms: Math.round(totalDtMs),
+  };
+}
+ 
+async function dtInsertSession() {
+  try {
+    const res  = await fetch(`${API_BASE}/downtime/update/start`, {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify(getDtPayload()),
+    });
+    const data = await res.json();
+    if (data.ok) {
+      dtSessionId = data.session_id;
+      localStorage.setItem(DT_SESSION_KEY, String(dtSessionId));
+      console.log(`[DB Downtime] INSERT id=${dtSessionId}`);
+    }
+  } catch(err) {
+    console.warn('[DB Downtime] INSERT error:', err.message);
   }
-
-  // Reset session id lokal
-  dbSessionId = null;
-  localStorage.removeItem(DB_SESSION_KEY);
-
-  // INSERT row baru langsung — shift/produk akan diisi setelah user tekan Simpan Setup via UPDATE
-  await dbInsertSession();
-  console.log(`[Dashboard DB] Row baru id=${dbSessionId} siap — shift/produk diisi via Simpan Setup`);
-
-  showRestartWaitNotif(`Mesin ${machineNum} restart`);
+}
+ 
+function dtUpdateSession() {
+  if (!dtSessionId) return;
+  if (_dtUpdateTimer) return;
+  _dtUpdateTimer = setTimeout(async () => {
+    _dtUpdateTimer = null;
+    try {
+      await fetch(`${API_BASE}/downtime/update/${dtSessionId}`, {
+        method:  'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify(getDtPayload()),
+      });
+      console.log(`[DB Downtime] UPDATE id=${dtSessionId}`);
+    } catch(err) {
+      console.warn('[DB Downtime] UPDATE error:', err.message);
+    }
+  }, 10000);
+}
+ 
+async function dtUpdateSessionNow() {
+  if (!dtSessionId) return;
+  try {
+    await fetch(`${API_BASE}/downtime/update/${dtSessionId}`, {
+      method:    'PUT',
+      headers:   { 'Content-Type': 'application/json' },
+      body:      JSON.stringify(getDtPayload()),
+      keepalive: true,
+    });
+  } catch(err) {}
 }
 
-function showRestartWaitNotif(who) {
-  let n = document.getElementById('restart-wait-notif');
-  if (!n) {
-    n = document.createElement('div');
-    n.id = 'restart-wait-notif';
-    n.style.cssText =
-      'position:fixed;top:20px;left:50%;transform:translateX(-50%);z-index:9999;' +
-      'background:#13171f;border:1px solid rgba(251,146,60,0.4);border-radius:12px;' +
-      'padding:14px 24px;display:flex;align-items:center;gap:12px;' +
-      'box-shadow:0 0 30px rgba(251,146,60,0.15)';
-    document.body.appendChild(n);
+(async function initDtSession() {
+  const saved = localStorage.getItem(DT_SESSION_KEY);
+  if (saved) {
+    dtSessionId = parseInt(saved) || null;
+    console.log(`[DB Downtime] Lanjut sesi id=${dtSessionId}`);
+  } 
+})();
+function triggerDowntimeSession() {
+
+  if (!dtSessionId && !state1.inSetup && !state2.inSetup) {
+    console.log("[Downtime] Setup selesai → buat sesi downtime");
+    dtInsertSession();
   }
-  n.innerHTML = `<span style="font-size:18px">📋</span><div>
-    <div style="font-family:DM Mono,monospace;font-size:10px;letter-spacing:0.12em;color:#fb923c;text-transform:uppercase">${who}</div>
-    <div style="font-size:12px;color:#7a7870;margin-top:3px">Silakan isi shift &amp; produk, lalu tekan Simpan Setup</div>
-  </div>`;
 }
 
-function hideRestartWaitNotif() {
-  document.getElementById('restart-wait-notif')?.remove();
-}
+let _tabActive = true;
 
-// ── Init DB ───────────────────────────────────────────────
+(function initTabSingleton() {
+  try {
+    const ch = new BroadcastChannel('oee_dashboard_tab');
+    ch.postMessage('takeover');
+    ch.onmessage = (e) => {
+      if (e.data === 'takeover') {
+        _tabActive = false;
+        if (dbSaveInterval) { clearInterval(dbSaveInterval); dbSaveInterval = null; }
+        if (_dbUpdateTimer)  { clearTimeout(_dbUpdateTimer);  _dbUpdateTimer  = null; }
+        console.warn('[Dashboard] Tab lain aktif — tab ini berhenti UPDATE DB');
+        let banner = document.getElementById('tab-inactive-banner');
+        if (!banner) {
+          banner = document.createElement('div');
+          banner.id = 'tab-inactive-banner';
+          banner.style.cssText =
+            'position:fixed;bottom:0;left:0;right:0;z-index:99999;' +
+            'background:#1a0a0a;border-top:1px solid rgba(248,113,113,0.4);' +
+            'padding:10px 24px;display:flex;align-items:center;justify-content:space-between;gap:12px';
+          banner.innerHTML = `
+            <div style="display:flex;align-items:center;gap:10px">
+              <span style="font-size:16px">⚠️</span>
+              <div>
+                <span style="font-family:DM Mono,monospace;font-size:10px;letter-spacing:0.1em;color:#f87171;text-transform:uppercase">
+                  Tab tidak aktif
+                </span>
+                <span style="font-size:12px;color:#7a7870;margin-left:10px">
+                  Dashboard ini tidak menyimpan ke DB — tutup tab lain atau
+                </span>
+              </div>
+            </div>
+            <button onclick="location.reload()"
+              style="padding:6px 16px;background:rgba(248,113,113,0.1);border:1px solid rgba(248,113,113,0.3);
+                     border-radius:8px;color:#f87171;font-family:DM Mono,monospace;font-size:11px;
+                     cursor:pointer;white-space:nowrap">
+              Aktifkan Tab Ini
+            </button>`;
+          document.body.appendChild(banner);
+        }
+      }
+    };
+  } catch(e) {
+    console.warn('[Dashboard] BroadcastChannel tidak didukung');
+  }
+})();
+
+
 (async function initDashboardDb() {
   ['oee_mesin1_session_id', 'oee_mesin2_session_id'].forEach(k => {
     try { localStorage.removeItem(k); } catch(e) {}
   });
+
   const saved = localStorage.getItem(DB_SESSION_KEY);
+
+  if (saved === 'pending') {
+    console.log('[Dashboard DB] Status pending — tunggu 3 detik...');
+    await new Promise(r => setTimeout(r, 3000));
+    const afterWait = localStorage.getItem(DB_SESSION_KEY);
+    if (afterWait && afterWait !== 'pending') {
+      dbSessionId = parseInt(afterWait) || null;
+      console.log(`[Dashboard DB] Lanjut sesi id=${dbSessionId}`);
+    } else {
+      console.warn('[Dashboard DB] Pending timeout — INSERT ulang');
+      localStorage.removeItem(DB_SESSION_KEY);
+      await dbInsertSession();
+    }
+    startDbSaveInterval();
+    return;
+  }
+
   if (saved) {
     dbSessionId = parseInt(saved) || null;
-    console.log(`[Dashboard DB] Lanjut sesi id=${dbSessionId}`);
+    console.log(`[Dashboard DB] ✅ Lanjut sesi id=${dbSessionId}`);
     startDbSaveInterval();
-  } else {
-    console.log('[Dashboard DB] Tidak ada session — INSERT baru...');
-    await dbInsertSession();
+    return;
   }
+
+  console.log('[Dashboard DB] Pertama kali buka — INSERT sesi baru...');
+  await dbInsertSession();
 })();
 
-// ── Init UI ───────────────────────────────────────────────
 updateDisplay1();
 updateDisplay2();
 updateOEE();
@@ -904,7 +1075,11 @@ setInterval(() => {
   if (el('total-downtime')) el('total-downtime').innerText = formatTime(Math.round((dtA + dtB) / 2));
 }, 500);
 
-console.log('✅ dashboard.js loaded (FIXED v3)');
-console.log('   INSERT HANYA di handleRestarted() — dipicu btnRestartESP');
-console.log('   Reset clear lokal saja — dbSessionId TIDAK diubah, TIDAK INSERT baru');
-console.log('   Simpan Setup → UPDATE row yang dibuat saat restart');
+console.log('✅ dashboard.js loaded — FIX: reject sync via oee/reject/total saja (tidak dobel dari oee/reject/data)');
+
+
+setInterval(() => {
+  if (dtSessionId) {
+    dtUpdateSession();
+  }
+}, 60000);

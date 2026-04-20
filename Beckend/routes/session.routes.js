@@ -1,9 +1,7 @@
-// Beckend/routes/session.routes.js
 const express = require('express');
 const router  = express.Router();
 const { insertSession, updateSession, getSessions } = require('../services/Session.service');
 
-// POST /api/session/start — INSERT row baru (ESP32 restart)
 router.post('/start', async (req, res) => {
   try {
     const result = await insertSession(req.body);
@@ -14,7 +12,6 @@ router.post('/start', async (req, res) => {
   }
 });
 
-// PUT /api/session/:id — UPDATE row (tiap 5 menit)
 router.put('/:id', async (req, res) => {
   try {
     const sessionId = parseInt(req.params.id, 10);
@@ -29,8 +26,6 @@ router.put('/:id', async (req, res) => {
   }
 });
 
-// GET /api/session — ambil semua sesi
-// Query params: ?tgl=2026-03-12&mesin=1&shift=1
 router.get('/', async (req, res) => {
   try {
     const rows = await getSessions({

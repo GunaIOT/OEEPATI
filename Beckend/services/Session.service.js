@@ -1,9 +1,7 @@
-// Beckend/services/Session.service.js
 const pool = require('../database/db');
 
 const msToSec = (ms) => Math.round((ms || 0) / 1000);
 
-// ── Hitung OEE ───────────────────────────────────────────
 function calcOEE({ target_m1 = 0, target_m2 = 0, setup_time_ms = 0,
                    downtime_ms = 0, minor_breakdown_ms = 0, total_reject = 0 }) {
   const MS_PER_PCS_PARALEL = 1034;
@@ -31,7 +29,6 @@ function calcOEE({ target_m1 = 0, target_m2 = 0, setup_time_ms = 0,
   };
 }
 
-// ── INSERT — sesi baru (ESP32 restart) ───────────────────
 async function insertSession(payload) {
   const {
     tgl_produksi, shift = 1, product = '-',
@@ -62,7 +59,6 @@ async function insertSession(payload) {
   return { id: result.insertId, ...oee };
 }
 
-// ── UPDATE — tiap 5 menit (row yang sama) ────────────────
 async function updateSession(sessionId, payload) {
   const {
     target_m1 = 0, target_m2 = 0,
@@ -97,7 +93,6 @@ async function updateSession(sessionId, payload) {
   return oee;
 }
 
-// ── GET — ambil sesi untuk laporan ───────────────────────
 async function getSessions({ tgl, mesin, shift } = {}) {
   const where = [], params = [];
   if (tgl)   { where.push('tgl_produksi = ?'); params.push(tgl); }
