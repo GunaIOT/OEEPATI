@@ -25,7 +25,6 @@ router.put('/:id', async (req, res) => {
     res.status(500).json({ ok: false, error: err.message });
   }
 });
-
 router.get('/', async (req, res) => {
   try {
     const rows = await getSessions({

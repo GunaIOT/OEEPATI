@@ -28,7 +28,93 @@ function calcOEE({ target_m1 = 0, target_m2 = 0, setup_time_ms = 0,
     oee: parseFloat(oee.toFixed(2)),
   };
 }
+const pool = require('../database/db');
 
+async function insertRejectSession(payload) {
+  const {
+    tgl_produksi,
+    shift        = 1,
+    product      = '-',
+    target       = 0,
+    kosong       = 0,
+    coding       = 0,
+    seal         = 0,
+    kurang_angin = 0,
+    gramasi      = 0,
+    lain_lain    = 0,
+  } = payload;
+
+  const total_reject = kosong + coding + seal + kurang_angin + gramasi + lain_lain;
+
+  const [result] = await pool.execute(
+    `INSERT INTO reject_mesin4
+       (tgl_produksi, shift, product, target, waktu_submit,
+        kosong, coding, seal, kurang_angin, gramasi, lain_lain, total_reject)
+     VALUES (?, ?, ?, ?, NOW(), ?, ?, ?, ?, ?, ?, ?)`,
+    [tgl_produksi, shift, product, target,
+     kosong, coding, seal, kurang_angin, gramasi, lain_lain, total_reject]
+  );
+
+  console.log(`[DB Reject] INSERT id=${result.insertId} — total=${total_reject}`);
+  return { id: result.insertId, total_reject };
+}
+
+async function getRejectSessions({ tgl, shift } = {}) {
+  const where = [], params = [];
+  if (tgl)   { where.push('tgl_produksi = ?'); params.push(tgl); }
+  if (shift) { where.push('shift = ?');         params.push(shift); }
+
+  const sql = `SELECT * FROM reject_mesin4
+               ${where.length ? 'WHERE ' + where.join(' AND ') : ''}
+               ORDER BY id DESC LIMIT 500`;
+  const [rows] = await pool.execute(sql, params);
+  return rows;
+}
+
+module.exports = { insertRejectSession, getRejectSessions };const pool = require('../database/db');
+
+async function insertRejectSession(payload) {
+  const {
+    tgl_produksi,
+    shift        = 1,
+    product      = '-',
+    target       = 0,
+    kosong       = 0,
+    coding       = 0,
+    seal         = 0,
+    kurang_angin = 0,
+    gramasi      = 0,
+    lain_lain    = 0,
+  } = payload;
+
+  const total_reject = kosong + coding + seal + kurang_angin + gramasi + lain_lain;
+
+  const [result] = await pool.execute(
+    `INSERT INTO reject_mesin4
+       (tgl_produksi, shift, product, target, waktu_submit,
+        kosong, coding, seal, kurang_angin, gramasi, lain_lain, total_reject)
+     VALUES (?, ?, ?, ?, NOW(), ?, ?, ?, ?, ?, ?, ?)`,
+    [tgl_produksi, shift, product, target,
+     kosong, coding, seal, kurang_angin, gramasi, lain_lain, total_reject]
+  );
+
+  console.log(`[DB Reject] INSERT id=${result.insertId} — total=${total_reject}`);
+  return { id: result.insertId, total_reject };
+}
+
+async function getRejectSessions({ tgl, shift } = {}) {
+  const where = [], params = [];
+  if (tgl)   { where.push('tgl_produksi = ?'); params.push(tgl); }
+  if (shift) { where.push('shift = ?');         params.push(shift); }
+
+  const sql = `SELECT * FROM reject_mesin4
+               ${where.length ? 'WHERE ' + where.join(' AND ') : ''}
+               ORDER BY id DESC LIMIT 500`;
+  const [rows] = await pool.execute(sql, params);
+  return rows;
+}
+
+module.exports = { insertRejectSession, getRejectSessions };
 async function insertSession(payload) {
   const {
     tgl_produksi, shift = 1, product = '-',
@@ -40,7 +126,7 @@ async function insertSession(payload) {
   const oee = calcOEE({ target_m1, target_m2, setup_time_ms, downtime_ms, minor_breakdown_ms, total_reject });
 
   const [result] = await pool.execute(
-    `INSERT INTO production_sessions
+    `INSERT INTO hasil_produksi
        (tgl_produksi, shift, product,
         target, finish_goods,
         loading_time_s, operating_time_s, net_operating_time_s,
@@ -69,7 +155,7 @@ async function updateSession(sessionId, payload) {
   const oee = calcOEE({ target_m1, target_m2, setup_time_ms, downtime_ms, minor_breakdown_ms, total_reject });
 
   await pool.execute(
-    `UPDATE production_sessions SET
+    `UPDATE hasil_produksi SET
        target               = ?,
        finish_goods         = ?,
        loading_time_s       = ?,
@@ -98,7 +184,7 @@ async function getSessions({ tgl, mesin, shift } = {}) {
   if (tgl)   { where.push('tgl_produksi = ?'); params.push(tgl); }
   if (shift) { where.push('shift = ?');         params.push(shift); }
 
-  const sql = `SELECT * FROM production_sessions
+  const sql = `SELECT * FROM hasil_produksi
                ${where.length ? 'WHERE ' + where.join(' AND ') : ''}
                ORDER BY id DESC LIMIT 200`;
   const [rows] = await pool.execute(sql, params);

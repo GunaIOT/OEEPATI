@@ -1,5 +1,4 @@
 const pool = require('../database/db');
-
 async function insertUpdateDowntime(payload) {
   const {
     tgl_produksi,
@@ -11,7 +10,7 @@ async function insertUpdateDowntime(payload) {
   } = payload;
 
   const [result] = await pool.execute(
-    `INSERT INTO oee_updateDowntime
+    `INSERT INTO updateDowntime_m4
        (tgl_produksi, shift, product,
         total_minor_ms, total_setup_ms, total_downtime_ms,
         session_start, last_updated)
@@ -20,7 +19,7 @@ async function insertUpdateDowntime(payload) {
      total_minor_ms, total_setup_ms, total_downtime_ms]
   );
 
-  console.log(`[DB] INSERT oee_updateDowntime id=${result.insertId}`);
+  console.log(`[DB] INSERT updateDowntime_m4 id=${result.insertId}`);
   return { id: result.insertId };
 }
 
@@ -32,7 +31,7 @@ async function updateUpdateDowntime(sessionId, payload) {
   } = payload;
 
   await pool.execute(
-    `UPDATE oee_updateDowntime SET
+    `UPDATE updateDowntime_m4 SET
        total_minor_ms    = ?,
        total_setup_ms    = ?,
        total_downtime_ms = ?,
@@ -41,14 +40,14 @@ async function updateUpdateDowntime(sessionId, payload) {
     [total_minor_ms, total_setup_ms, total_downtime_ms, sessionId]
   );
 
-  console.log(`[DB] UPDATE oee_updateDowntime id=${sessionId}`);
+  console.log(`[DB] UPDATE updateDowntime_m4 id=${sessionId}`);
 }
 
 async function getUpdateDowntime({ tgl, shift } = {}) {
   const where = [], params = [];
   if (tgl)   { where.push('tgl_produksi = ?'); params.push(tgl); }
   if (shift) { where.push('shift = ?');         params.push(shift); }
-  const sql = `SELECT * FROM oee_updateDowntime
+  const sql = `SELECT * FROM updateDowntime_m4
                ${where.length ? 'WHERE ' + where.join(' AND ') : ''}
                ORDER BY id DESC LIMIT 200`;
   const [rows] = await pool.execute(sql, params);
@@ -72,7 +71,7 @@ async function insertPopupDowntime(payload) {
   } = payload;
 
   const [result] = await pool.execute(
-    `INSERT INTO oee_popupDowntime
+    `INSERT INTO popupDowntime_m4
        (tgl_produksi, shift, product,
         minor_durasi_m1_ms, minor_alasan_m1,
         minor_durasi_m2_ms, minor_alasan_m2,
@@ -88,7 +87,7 @@ async function insertPopupDowntime(payload) {
      is_shared]
   );
 
-  console.log(`[DB] INSERT oee_popupDowntime id=${result.insertId} shared=${is_shared}`);
+  console.log(`[DB] INSERT popupDowntime_m4 id=${result.insertId} shared=${is_shared}`);
   return { id: result.insertId };
 }
 
@@ -96,7 +95,7 @@ async function getPopupDowntime({ tgl, shift } = {}) {
   const where = [], params = [];
   if (tgl)   { where.push('tgl_produksi = ?'); params.push(tgl); }
   if (shift) { where.push('shift = ?');         params.push(shift); }
-  const sql = `SELECT * FROM oee_popupDowntime
+  const sql = `SELECT * FROM popupDowntime_m4
                ${where.length ? 'WHERE ' + where.join(' AND ') : ''}
                ORDER BY id DESC LIMIT 500`;
   const [rows] = await pool.execute(sql, params);

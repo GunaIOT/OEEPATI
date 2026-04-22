@@ -56,3 +56,37 @@ GROUP BY tgl_produksi, shift, product
 ORDER BY tgl_produksi DESC, shift ASC;
 
 
+CREATE DATABASE IF NOT EXISTS oee_mesin4
+  CHARACTER SET utf8mb4
+  COLLATE utf8mb4_unicode_ci;
+
+USE oee_mesin4;
+
+CREATE TABLE IF NOT EXISTS hasil_produksi (
+    id INT UNSIGNED NOT NULL AUTO_INCREMENT,
+    tgl_produksi DATE NOT NULL,
+    shift TINYINT NOT NULL DEFAULT 1,
+    product VARCHAR(100) NOT NULL,
+
+    session_start DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    last_update DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP 
+        ON UPDATE CURRENT_TIMESTAMP,
+
+    target INT UNSIGNED NOT NULL DEFAULT 0,
+    finish_goods INT UNSIGNED NOT NULL DEFAULT 0,
+
+    loading_times INT UNSIGNED NOT NULL DEFAULT 0,
+    operation_times INT UNSIGNED NOT NULL DEFAULT 0,
+    net_operation_times INT UNSIGNED NOT NULL DEFAULT 0,
+
+    ar DECIMAL(5,2) NOT NULL DEFAULT 0.00,
+    pr DECIMAL(5,2) NOT NULL DEFAULT 0.00,
+    qr DECIMAL(5,2) NOT NULL DEFAULT 0.00,
+    oee DECIMAL(5,2) NOT NULL DEFAULT 0.00,
+
+    PRIMARY KEY (id),
+    INDEX idx_tgl (tgl_produksi),
+    INDEX idx_shift (shift),
+    INDEX idx_session (tgl_produksi, shift)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
