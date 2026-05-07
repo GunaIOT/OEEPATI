@@ -1,4 +1,11 @@
 const pool = require('../database/db');
+
+// ══════════════════════════════════════════════════════════════
+//  Mutex sederhana — cegah race condition saat 2 request
+//  POST /downtime/update/start datang hampir bersamaan
+// ══════════════════════════════════════════════════════════════
+const _insertLock = new Map(); // key: "tgl|shift"
+
 async function insertUpdateDowntime(payload) {
   const {
     tgl_produksi,
@@ -9,18 +16,37 @@ async function insertUpdateDowntime(payload) {
     total_downtime_ms = 0,
   } = payload;
 
-  const [result] = await pool.execute(
-    `INSERT INTO updateDowntime_m4
-       (tgl_produksi, shift, product,
-        total_minor_ms, total_setup_ms, total_downtime_ms,
-        session_start, last_updated)
-     VALUES (?, ?, ?, ?, ?, ?, NOW(), NOW())`,
-    [tgl_produksi, shift, product,
-     total_minor_ms, total_setup_ms, total_downtime_ms]
-  );
+  const lockKey = `${tgl_produksi}|${shift}`;
 
-  console.log(`[DB] INSERT updateDowntime_m4 id=${result.insertId}`);
-  return { id: result.insertId };
+  // Kalau sedang ada proses INSERT untuk tgl+shift yang sama, tunggu
+  if (_insertLock.get(lockKey)) {
+    console.log(`[DB] INSERT lock aktif untuk ${lockKey} — tunggu...`);
+    await new Promise(r => setTimeout(r, 300));
+  }
+
+  // Cek lagi sesudah tunggu — mungkin sudah di-insert oleh request sebelumnya
+  const existing = await getActiveDowntimeSession({ tgl: tgl_produksi, shift });
+  if (existing) {
+    console.log(`[DB] Race condition dicegah — pakai id=${existing.id}`);
+    return { id: existing.id };
+  }
+
+  _insertLock.set(lockKey, true);
+  try {
+    const [result] = await pool.execute(
+      `INSERT INTO updateDowntime_m4
+         (tgl_produksi, shift, product,
+          total_minor_ms, total_setup_ms, total_downtime_ms,
+          session_start, last_updated)
+       VALUES (?, ?, ?, ?, ?, ?, NOW(), NOW())`,
+      [tgl_produksi, shift, product,
+       total_minor_ms, total_setup_ms, total_downtime_ms]
+    );
+    console.log(`[DB] INSERT updateDowntime_m4 id=${result.insertId}`);
+    return { id: result.insertId };
+  } finally {
+    _insertLock.delete(lockKey);
+  }
 }
 
 async function updateUpdateDowntime(sessionId, payload) {
@@ -102,6 +128,8 @@ async function getPopupDowntime({ tgl, shift } = {}) {
   return rows;
 }
 
+// ── Cek session aktif berdasarkan tgl + shift
+// Ini adalah sumber kebenaran tunggal — selalu tanya DB, bukan localStorage
 async function getActiveDowntimeSession({ tgl, shift } = {}) {
   if (!tgl || !shift) return null;
   const [rows] = await pool.execute(
@@ -110,9 +138,9 @@ async function getActiveDowntimeSession({ tgl, shift } = {}) {
      ORDER BY id DESC LIMIT 1`,
     [tgl, parseInt(shift)]
   );
- 
   return rows.length > 0 ? rows[0] : null;
 }
+
 module.exports = {
   getActiveDowntimeSession,
   insertUpdateDowntime,

@@ -980,30 +980,52 @@ function getDtPayload() {
   };
 }
 
+let _dtInsertLock = false;
+ 
 async function dtInsertSession() {
+  if (dtSessionId) return;
+  if (_dtInsertLock) {
+    await new Promise(r => setTimeout(r, 500));
+    return;
+  }
+  _dtInsertLock = true;
   try {
     const tgl   = setupInfo1.date  || new Date().toISOString().split('T')[0];
     const shift = setupInfo1.shift || 1;
+ 
+    // Step 1: tanya server — ada session aktif untuk tgl+shift ini?
     try {
-      const chk  = await fetch(`${API_BASE}/downtime/active?tgl=${tgl}&shift=${shift}`);
-      const chkD = await chk.json();
-      if (chkD.ok && chkD.session_id) {
-        dtSessionId = chkD.session_id;
+      const chkRes  = await fetch(`${API_BASE}/downtime/active?tgl=${tgl}&shift=${shift}`);
+      const chkData = await chkRes.json();
+      if (chkData.ok && chkData.session_id) {
+        dtSessionId = chkData.session_id;
         localStorage.setItem(DT_SESSION_KEY, String(dtSessionId));
+        console.log(`[DB Downtime] ✅ Pakai session aktif id=${dtSessionId} (tidak INSERT baru)`);
         return;
       }
-    } catch(e) {}
-
+    } catch(e) {
+      console.warn('[DB Downtime] Gagal cek /downtime/active:', e.message);
+    }
+ 
+    // Step 2: belum ada → POST ke server
+    // Server juga punya guard di route-nya, aman dari race condition
     const res  = await fetch(`${API_BASE}/downtime/update/start`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(getDtPayload()),
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify(getDtPayload()),
     });
     const data = await res.json();
     if (data.ok) {
       dtSessionId = data.session_id;
       localStorage.setItem(DT_SESSION_KEY, String(dtSessionId));
+      const label = data.reused ? 'Reused' : 'INSERT baru';
+      console.log(`[DB Downtime] ✅ ${label} id=${dtSessionId}`);
     }
-  } catch(err) {}
+  } catch(err) {
+    console.warn('[DB Downtime] dtInsertSession error:', err.message);
+  } finally {
+    _dtInsertLock = false;
+  }
 }
 
 function dtUpdateSession() {
