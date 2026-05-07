@@ -1,10 +1,28 @@
-// Beckend/routes/downtime.routes.js
+// Beckend/routes/Downtime.routes.js
 const express = require('express');
 const router  = express.Router();
 const {
   insertUpdateDowntime, updateUpdateDowntime, getUpdateDowntime,
-  insertPopupDowntime, getPopupDowntime,
+  insertPopupDowntime, getPopupDowntime, getActiveDowntimeSession,
 } = require('../services/Downtime.service');
+
+// ── Cek downtime session aktif berdasarkan tgl + shift (untuk fix multi-device)
+router.get('/active', async (req, res) => {
+  try {
+    const { tgl, shift } = req.query;
+    if (!tgl || !shift) {
+      return res.status(400).json({ ok: false, error: 'tgl dan shift wajib diisi' });
+    }
+    const row = await getActiveDowntimeSession({ tgl, shift: parseInt(shift, 10) });
+    if (row) {
+      return res.json({ ok: true, session_id: row.id });
+    }
+    return res.json({ ok: false });
+  } catch (err) {
+    console.error('[GET /downtime/active]', err.message);
+    res.status(500).json({ ok: false, error: err.message });
+  }
+});
 
 router.post('/update/start', async (req, res) => {
   try {

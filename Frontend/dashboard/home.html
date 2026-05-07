@@ -1,453 +1,581 @@
 <!DOCTYPE html>
 <html lang="id">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Dashboard Monitoring Mesin Packing</title>
-  <script src="https://cdn.tailwindcss.com"></script>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
-  <script src="https://unpkg.com/mqtt/dist/mqtt.min.js"></script>
-  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@400;600;700&family=DM+Mono:wght@300;400;500&family=Outfit:wght@300;400;500;600&display=swap" rel="stylesheet">
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Dashboard Monitoring Mesin Packing</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="https://unpkg.com/mqtt/dist/mqtt.min.js"></script>
+<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@400;600;700&family=DM+Mono:wght@300;400;500&family=Outfit:wght@300;400;500;600&display=swap" rel="stylesheet">
 
-  <script>
-    tailwind.config = {
-      theme: {
-        extend: {
-          colors: {
-            bg:      '#0a0c10',
-            surface: '#0f1218',
-            card:    '#13171f',
-            gold:    '#c5a860',
-            'gold-lt': '#e2c97e',
-          },
-          fontFamily: {
-            serif: ['Cormorant Garamond', 'serif'],
-            mono:  ['DM Mono', 'monospace'],
-            sans:  ['Outfit', 'sans-serif'],
-          },
-        }
-      }
-    }
-  </script>
+<style>
+:root {
+  --bg:       #080a0e;
+  --surf:     #0d1017;
+  --card:     #111520;
+  --border:   rgba(255,255,255,0.06);
+  --gold:     #c5a860;
+  --gold-lt:  #e2c97e;
+  --gold-dim: rgba(197,168,96,0.12);
+  --gold-rim: rgba(197,168,96,0.22);
+  --emerald:  #34d399;
+  --red:      #f87171;
+  --sky:      #60a5fa;
+  --amber:    #fbbf24;
+  --violet:   #a78bfa;
+}
 
-  <style>
-    body { background: #0a0c10; }
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
-    .ambient-glow {
-      position: fixed; top: -30vh; left: 50%;
-      transform: translateX(-50%);
-      width: 90vw; height: 70vh;  
-      background: radial-gradient(ellipse, rgba(197,168,96,0.055) 0%, transparent 65%);
-      pointer-events: none; z-index: 0;
-    }
+html, body {
+  width: 100vw; height: 100vh;
+  overflow: hidden;
+  background: var(--bg);
+  font-family: 'Outfit', sans-serif;
+  color: #d4cfc8;
+}
 
-    .card-online::before {
-      content: '';
-      position: absolute; top: 0; left: 10%; right: 10%; height: 1px;
-      background: linear-gradient(90deg, transparent, #c5a860, transparent);
-    }
+/* ══════════════════════════════════
+   ROOT  —  header / main / footer
+══════════════════════════════════ */
+#root {
+  width: 100vw; height: 100vh;
+  display: grid;
+  grid-template-rows: 50px 1fr 26px;
+}
 
-    .watermark {
-      position: absolute; bottom: -14px; right: 18px;
-      font-family: 'Cormorant Garamond', serif;
-      font-size: 130px; font-weight: 700;
-      color: rgba(255,255,255,0.022);
-      line-height: 1; pointer-events: none; user-select: none;
-    }
+/* ── Header ── */
+#hdr {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 0 16px;
+  background: var(--card);
+  border-bottom: 1px solid var(--border);
+  position: relative; flex-shrink: 0;
+}
+#hdr::after {
+  content:''; position:absolute; bottom:0; left:0; right:0; height:1px;
+  background: linear-gradient(90deg,transparent,var(--gold) 35%,transparent);
+  opacity:.18;
+}
+.hdr-eyebrow { font-family:'DM Mono',monospace; font-size:8px; letter-spacing:.22em; color:var(--gold); text-transform:uppercase; margin-bottom:2px; }
+.hdr-title   { font-family:'Cormorant Garamond',serif; font-size:19px; font-weight:600; color:#f0ece4; line-height:1; }
+.hdr-right   { display:flex; align-items:center; gap:16px; }
+#clock       { font-family:'DM Mono',monospace; font-size:19px; color:#f0ece4; letter-spacing:.06em; text-align:right; }
+#date-label  { font-family:'DM Mono',monospace; font-size:8px; color:#5a5650; letter-spacing:.12em; text-align:right; }
+.live-pill   { display:flex; align-items:center; gap:5px; font-family:'DM Mono',monospace; font-size:8px; letter-spacing:.16em; color:#5a5650; text-transform:uppercase; }
+.live-dot    { width:6px; height:6px; border-radius:50%; background:#4caf7d; box-shadow:0 0 6px #4caf7d; animation:blink 2s infinite; flex-shrink:0; }
 
-    @keyframes fadeUp {
-      from { opacity: 0; transform: translateY(22px); }
-      to   { opacity: 1; transform: translateY(0); }
-    }
-    @keyframes blink {
-      0%,100% { opacity:1; box-shadow: 0 0 8px #4caf7d; }
-      50%      { opacity:0.4; box-shadow: 0 0 2px #4caf7d; }
-    }
+/* ── Main ── */
+#main {
+  display: grid;
+  grid-template-rows: 1fr 1fr;   /* top row = machines, bottom row = summary+oee */
+  overflow: hidden; min-height: 0;
+}
 
-    .fade-up-1 { animation: fadeUp 0.7s ease both; }
-    .fade-up-2 { animation: fadeUp 0.7s ease 0.1s both; }
-    .fade-up-3 { animation: fadeUp 0.7s ease 0.2s both; }
-    .fade-up-4 { animation: fadeUp 0.7s ease 0.3s both; }
+/* ── Top row: machines ── */
+#machines-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  border-bottom: 1px solid var(--border);
+  overflow: hidden; min-height: 0;
+}
 
-    .live-dot {
-      width: 7px; height: 7px; border-radius: 50%;
-      background: #4caf7d; box-shadow: 0 0 8px #4caf7d;
-      animation: blink 2s infinite; display: inline-block;
-    }
+/* ── Bottom row: summary + oee ── */
+#bottom-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  overflow: hidden; min-height: 0;
+}
 
-    .progress-bar {
-      transition: width 0.9s cubic-bezier(0.4,0,0.2,1);
-    }
+/* ── Footer ── */
+#ftr {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 0 16px;
+  border-top: 1px solid var(--border);
+  background: var(--card);
+  font-family: 'DM Mono',monospace; font-size:8px; letter-spacing:.14em; color:#3d3830;
+  flex-shrink: 0;
+}
+#ftr span { color:var(--gold); }
 
-    .hover-lift { transition: transform 0.25s ease, border-color 0.3s ease; }
-    .hover-lift:hover { transform: translateY(-2px); }
+/* ══════════════════════════════════
+   MACHINE CARD
+══════════════════════════════════ */
+.mc {
+  display: flex; flex-direction: column;
+  overflow: hidden; min-height: 0;
+  border-right: 1px solid var(--border);
+}
+.mc:last-child { border-right: none; }
 
-    select option { background: #13171f; }
-    input[type="date"]::-webkit-calendar-picker-indicator { filter: invert(0.5); }
-  </style>
+/* Card header strip */
+.mc-hdr {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 7px 14px;
+  background: var(--card);
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+.mc-icon { width:30px; height:30px; border-radius:8px; background:var(--gold-dim); border:1px solid var(--gold-rim); display:flex; align-items:center; justify-content:center; font-size:14px; flex-shrink:0; }
+.mc-name { font-family:'Cormorant Garamond',serif; font-size:16px; font-weight:600; color:#f0ece4; line-height:1; }
+.mc-sub  { font-family:'DM Mono',monospace; font-size:7.5px; letter-spacing:.15em; color:#5a5650; text-transform:uppercase; margin-top:1px; }
+
+/* Scrollable inner body */
+.mc-body {
+  flex:1; overflow:hidden; min-height:0;
+  display: grid;
+  /* 5 columns: output | target | good | loss | times */
+  grid-template-columns: 1fr 1fr 1fr 1fr 1fr;
+  gap: 6px;
+  padding: 8px 12px;
+  align-items: stretch;
+}
+
+/* Individual metric tile */
+.tile {
+  background: var(--surf);
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  padding: 8px 11px;
+  display: flex; flex-direction: column; justify-content: space-between;
+}
+.tile.gold   { border-color: var(--gold-rim); }
+.tile.good   { border-color: rgba(52,211,153,.15); }
+.tile.bad    { border-color: rgba(248,113,113,.15); }
+.tile.amber  { border-color: rgba(251,191,36,.16); }
+.tile.sky    { border-color: rgba(96,165,250,.15); }
+
+.t-label { font-family:'DM Mono',monospace; font-size:7px; letter-spacing:.18em; text-transform:uppercase; color:#3a3630; margin-bottom:4px; line-height:1.3; }
+.t-val-xl{ font-family:'DM Mono',monospace; font-size:26px; font-weight:300; line-height:1; letter-spacing:-.02em; }
+.t-val-lg{ font-family:'DM Mono',monospace; font-size:20px; font-weight:300; line-height:1; }
+.t-val-md{ font-family:'DM Mono',monospace; font-size:14px; font-weight:400; line-height:1; letter-spacing:.02em; }
+.t-unit  { font-family:'DM Mono',monospace; font-size:7.5px; color:#3a3630; margin-top:3px; letter-spacing:.08em; }
+.t-sub   { font-family:'DM Mono',monospace; font-size:7.5px; color:rgba(251,191,36,.45); letter-spacing:.06em; margin-top:1px; }
+
+/* Loading time mini row */
+.load-row { display:flex; align-items:center; gap:5px; padding-top:5px; margin-top:5px; border-top:1px solid rgba(255,255,255,.05); }
+.load-lbl { font-family:'DM Mono',monospace; font-size:6.5px; letter-spacing:.16em; color:#3a3630; text-transform:uppercase; }
+.load-val { font-family:'DM Mono',monospace; font-size:10px; color:var(--gold); font-weight:500; }
+
+/* Times column — stacked 4 mini boxes */
+.times-col {
+  display: flex; flex-direction: column; gap: 5px;
+}
+.time-mini {
+  flex: 1;
+  background: var(--surf); border: 1px solid var(--border);
+  border-radius: 8px; padding: 5px 9px;
+  display: flex; flex-direction: column; justify-content: center;
+}
+.time-mini.amber { border-color: rgba(251,191,36,.16); }
+.time-mini.sky   { border-color: rgba(96,165,250,.15); }
+.time-mini.bad   { border-color: rgba(248,113,113,.15); }
+.tm-lbl  { font-family:'DM Mono',monospace; font-size:6.5px; letter-spacing:.16em; text-transform:uppercase; color:#3a3630; }
+.tm-val  { font-family:'DM Mono',monospace; font-size:12px; font-weight:500; line-height:1; margin-top:2px; }
+.tm-sec  { font-family:'DM Mono',monospace; font-size:7px; color:rgba(251,191,36,.45); margin-top:1px; }
+
+/* Card footer: operator + shift */
+.mc-ftr {
+  flex-shrink: 0;
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 6px 14px;
+  border-top: 1px solid var(--border);
+  background: var(--card);
+}
+.op-av    { width:24px; height:24px; border-radius:50%; background:var(--gold-dim); border:1px solid var(--gold-rim); display:flex; align-items:center; justify-content:center; font-size:10px; flex-shrink:0; }
+.op-name  { font-size:11px; font-weight:500; color:#d4cfc8; line-height:1.2; }
+.op-role  { font-family:'DM Mono',monospace; font-size:7.5px; color:#3a3630; letter-spacing:.1em; }
+.sh-badge { font-family:'DM Mono',monospace; font-size:7.5px; letter-spacing:.1em; color:var(--gold); background:var(--gold-dim); border:1px solid var(--gold-rim); padding:3px 9px; border-radius:20px; white-space:nowrap; }
+.prod-badge{ font-family:'DM Mono',monospace; font-size:7.5px; font-weight:500; color:var(--gold); background:var(--gold-dim); border:1px solid var(--gold-rim); border-radius:4px; padding:1px 6px; letter-spacing:.04em; white-space:nowrap; }
+
+/* Status badge */
+.badge         { font-family:'DM Mono',monospace; font-size:7.5px; letter-spacing:.18em; text-transform:uppercase; padding:3px 9px; border-radius:20px; }
+.badge-off     { background:rgba(248,113,113,.08); color:var(--red); border:1px solid rgba(248,113,113,.2); }
+.badge-on      { background:rgba(52,211,153,.08); color:var(--emerald); border:1px solid rgba(52,211,153,.2); animation:pulse-green 2.5s infinite; }
+.badge-standby { background:rgba(255,255,255,.04); color:#57534e; border:1px solid var(--border); }
+
+/* ══════════════════════════════════
+   BOTTOM PANELS
+══════════════════════════════════ */
+.panel {
+  display: flex; flex-direction: column;
+  overflow: hidden; min-height: 0;
+  border-right: 1px solid var(--border);
+}
+.panel:last-child { border-right: none; }
+
+.panel-hdr {
+  display: flex; align-items: center; gap: 8px;
+  padding: 6px 14px;
+  background: var(--card);
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+.p-accent { width:2px; height:14px; border-radius:1px; background:linear-gradient(180deg,var(--gold),transparent); flex-shrink:0; }
+.p-title  { font-family:'Cormorant Garamond',serif; font-size:14px; font-weight:600; color:#f0ece4; }
+.p-sub    { font-family:'DM Mono',monospace; font-size:7.5px; color:#3a3630; letter-spacing:.12em; margin-left:auto; }
+
+.panel-body { flex:1; overflow:hidden; padding:8px 12px; display:flex; flex-direction:column; gap:6px; }
+
+/* ── Summary grid ── */
+.sum-top   { display:grid; grid-template-columns:repeat(6,1fr); gap:5px; }
+.sum-times { display:grid; grid-template-columns:repeat(6,1fr); gap:5px; flex:1; }
+
+.s-box {
+  background:var(--surf); border:1px solid var(--border);
+  border-radius:8px; padding:7px 9px; text-align:center;
+  display:flex; flex-direction:column; justify-content:center; gap:3px;
+}
+.s-box.good   { border-color:rgba(52,211,153,.15); }
+.s-box.bad    { border-color:rgba(248,113,113,.15); }
+.s-box.amber  { border-color:rgba(251,191,36,.16); }
+.s-box.sky    { border-color:rgba(96,165,250,.15); }
+.s-box.violet { border-color:rgba(167,139,250,.15); }
+.s-box.gold   { border-color:var(--gold-rim); }
+.s-box.orange { border-color:rgba(251,146,60,.15); }
+
+.s-lbl { font-family:'DM Mono',monospace; font-size:6.5px; letter-spacing:.15em; text-transform:uppercase; color:#3a3630; line-height:1.3; }
+.s-val { font-family:'DM Mono',monospace; font-size:17px; font-weight:300; line-height:1; }
+.s-sm  { font-family:'DM Mono',monospace; font-size:12px; font-weight:300; line-height:1; }
+
+/* ── OEE panel ── */
+.gauge-row { display:grid; grid-template-columns:1fr 1fr 1fr; gap:6px; flex:1; min-height:0; }
+.g-box {
+  background:var(--surf); border:1px solid var(--border);
+  border-radius:9px; padding:8px 8px;
+  display:flex; flex-direction:column; align-items:center; justify-content:space-between;
+}
+.g-lbl { font-family:'DM Mono',monospace; font-size:7px; letter-spacing:.14em; text-transform:uppercase; color:#3a3630; text-align:center; }
+.g-val { font-family:'DM Mono',monospace; font-size:18px; font-weight:300; line-height:1; text-align:center; }
+.g-sub { font-family:'DM Mono',monospace; font-size:7px; letter-spacing:.1em; text-transform:uppercase; color:#3a3630; text-align:center; }
+
+canvas { display:block; }
+
+.oee-row {
+  display:flex; align-items:center; gap:10px; flex-shrink:0;
+  padding-top:6px; border-top:1px solid var(--border);
+}
+.oee-lbl   { font-family:'DM Mono',monospace; font-size:7.5px; letter-spacing:.14em; text-transform:uppercase; color:#3a3630; white-space:nowrap; }
+.oee-track { flex:1; height:4px; background:rgba(255,255,255,.07); border-radius:2px; overflow:hidden; }
+.oee-fill  { height:100%; border-radius:2px; transition:width .9s cubic-bezier(.4,0,.2,1); background:linear-gradient(90deg,var(--gold),var(--gold-lt)); box-shadow:0 0 8px rgba(197,168,96,.4); }
+.oee-val   { font-family:'DM Mono',monospace; font-size:18px; font-weight:300; color:var(--gold-lt); white-space:nowrap; }
+
+/* ══════════════════════════════════
+   ANIMATIONS
+══════════════════════════════════ */
+@keyframes blink {
+  0%,100%{ opacity:1; box-shadow:0 0 6px #4caf7d; }
+  50%    { opacity:.35; box-shadow:0 0 2px #4caf7d; }
+}
+@keyframes pulse-green {
+  0%,100%{ box-shadow:0 0 0 0 rgba(52,211,153,.2); }
+  50%    { box-shadow:0 0 0 3px rgba(52,211,153,0); }
+}
+@keyframes fadeUp {
+  from{ opacity:0; transform:translateY(8px); }
+  to  { opacity:1; transform:translateY(0); }
+}
+#root { animation:fadeUp .45s ease both; }
+</style>
 </head>
+<body>
 
-<body class="font-sans text-stone-200 min-h-screen">
-<div class="ambient-glow"></div>
-
-<div class="relative z-10 max-w-[1300px] mx-auto px-6 py-11 pb-20">
+<div id="root">
 
   <!-- ══ HEADER ══ -->
-  <header class="flex items-end justify-between mb-14 pb-8 border-b border-white/[0.07] fade-up-1">
+  <header id="hdr">
     <div>
-      <p class="font-mono text-[10px] tracking-[0.28em] text-gold uppercase mb-2">Finished Good — Production Floor</p>
-      <h1 class="font-serif text-5xl font-semibold text-stone-100 leading-tight">
-        Monitoring Mesin <span class="text-gold">Packing 4</span>
-      </h1>
+      <div class="hdr-eyebrow">Finished Good — Production Floor</div>
+      <div class="hdr-title">Monitoring Mesin <span style="color:var(--gold)">Packing 4</span></div>
     </div>
-    <div class="flex flex-col items-end gap-1.5">
-      <div class="flex items-center gap-2 font-mono text-[10px] tracking-[0.14em] text-stone-500">
-        <span class="live-dot"></span> Real-time monitoring
+    <div class="hdr-right">
+      <div class="live-pill"><span class="live-dot"></span>Real-time</div>
+      <div>
+        <div id="clock">--:--:--</div>
+        <div id="date-label"></div>
       </div>
-      <div id="clock" class="font-mono text-2xl text-stone-100 tracking-wider">--:--:--</div>
-      <div id="date-label" class="text-[11px] text-stone-500 tracking-wider"></div>
     </div>
   </header>
 
-  <!-- ══ MACHINE CARDS ══ -->
-  <div class="grid grid-cols-1 xl:grid-cols-2 gap-5 mb-5">
+  <!-- ══ MAIN ══ -->
+  <div id="main">
 
-    <!-- ─ MESIN 1 ─ -->
-    <div id="machine1"
-         class="relative overflow-hidden bg-card rounded-2xl border border-white/[0.07] p-8 fade-up-1">
-      <div class="watermark">1</div>
+    <!-- ── TOP ROW: MESIN A + B ── -->
+    <div id="machines-row">
 
-      <div class="flex items-center justify-between mb-7">
-        <div class="flex items-center gap-3.5">
-          <div class="w-11 h-11 rounded-xl flex items-center justify-center text-xl
-                      bg-gold/10 border border-gold/20">⚙️</div>
-          <div>
-            <div class="font-serif text-[22px] font-semibold text-stone-100">MESIN PACKING A</div>
-            <div class="text-[11px] text-stone-500 tracking-wider mt-0.5">Rotary Seal Unit</div>
+      <!-- MESIN A -->
+      <div class="mc" id="machine1">
+        <div class="mc-hdr">
+          <div style="display:flex;align-items:center;gap:9px">
+            <div class="mc-icon">⚙️</div>
+            <div>
+              <div class="mc-name">MESIN PACKING A</div>
+              <div class="mc-sub">Rotary Seal Unit</div>
+            </div>
+          </div>
+          <span id="status1" class="badge badge-off">Offline</span>
+        </div>
+
+        <div class="mc-body">
+          <!-- 1: Total Output -->
+          <div class="tile gold">
+            <div class="t-label">Total Output</div>
+            <div id="pieces1" class="t-val-xl" style="color:var(--gold-lt)">0</div>
+            <div class="t-unit">pcs terpacking</div>
+          </div>
+          <!-- 2: Target Shift -->
+          <div class="tile gold">
+            <div class="t-label">Target Shift</div>
+            <div style="display:flex;align-items:baseline;gap:5px;flex-wrap:wrap">
+              <span id="target1" class="t-val-xl" style="color:var(--gold-lt)">0</span>
+              <span id="product-badge1" class="prod-badge" style="display:none">—</span>
+            </div>
+            <div class="t-unit">pcs</div>
+            <div class="load-row">
+              <span class="load-lbl">Loading</span>
+              <span id="estimasi1" class="load-val">—</span>
+            </div>
+          </div>
+          <!-- 3: Output Produk -->
+          <div class="tile good">
+            <div class="t-label">Output Produk</div>
+            <div id="inputOne1" class="t-val-lg" style="color:var(--emerald)">0</div>
+            <div class="t-unit">pcs</div>
+          </div>
+          <!-- 4: Output Loss -->
+          <div class="tile bad">
+            <div class="t-label">Output Loss</div>
+            <div id="inputZero1" class="t-val-lg" style="color:var(--red)">0</div>
+            <div class="t-unit">pcs</div>
+          </div>
+          <!-- 5: Times column -->
+          <div class="times-col">
+            <div class="time-mini">
+              <div class="tm-lbl">Setup Time</div>
+              <div id="setupTime1" class="tm-val" style="color:rgba(250,204,21,.85)">00:00:00</div>
+            </div>
+            <div class="time-mini amber">
+              <div class="tm-lbl">Minor Breakdown</div>
+              <div id="minorBreakdown1" class="tm-val" style="color:var(--amber)">00:00:00</div>
+              <div id="minorBreakdownSec1" class="tm-sec">0.000 s</div>
+            </div>
+            <div class="time-mini sky">
+              <div class="tm-lbl">Runtime</div>
+              <div id="runtime1" class="tm-val" style="color:var(--sky)">00:00:00</div>
+            </div>
+            <div class="time-mini bad">
+              <div class="tm-lbl">Downtime</div>
+              <div id="downtime1" class="tm-val" style="color:var(--red)">00:00:00</div>
+            </div>
           </div>
         </div>
-        <span id="status1"
-              class="font-mono text-[9px] tracking-[0.2em] uppercase px-3.5 py-1.5 rounded-full
-                     bg-red-500/10 text-red-400 border border-red-500/25">
-          Offline
-        </span>
-      </div>
 
-      <div class="grid grid-cols-2 gap-3.5 mb-3">
-        <div class="hover-lift bg-surface rounded-xl border border-white/[0.07] p-5">
-          <div class="font-mono text-[9px] tracking-[0.2em] uppercase text-stone-500 mb-2.5">TOTAL OUTPUT MESIN</div>
-          <div id="pieces1" class="font-mono text-[38px] font-light text-gold-lt leading-none tracking-tighter">0</div>
-          <div class="text-[10px] text-stone-600 mt-1.5 tracking-wider">pcs terpacking</div>
-        </div>
-        <div class="hover-lift bg-surface rounded-xl border border-white/[0.07] p-5">
-          <div class="font-mono text-[9px] tracking-[0.2em] uppercase text-stone-500 mb-2.5">Target Shift</div>
-          <div class="flex items-baseline gap-3 flex-wrap">
-            <div id="target1" class="font-mono text-[38px] font-light text-gold-lt leading-none tracking-tighter">0</div>
-            <!-- Badge produk — diupdate oleh dashboard.js -->
-            <span id="product-badge1"
-              style="display:none; font-family:'DM Mono',monospace; font-size:10px;
-                     font-weight:500; color:#c5a860; background:rgba(197,168,96,0.1);
-                     border:1px solid rgba(197,168,96,0.22); border-radius:6px;
-                     padding:2px 9px; letter-spacing:0.04em; white-space:nowrap;">
-              —
-            </span>
+        <div class="mc-ftr">
+          <div style="display:flex;align-items:center;gap:7px">
+            <div class="op-av">👤</div>
+            <div>
+              <div class="op-name">Budi Santoso</div>
+              <div class="op-role">Machine Operator</div>
+            </div>
           </div>
-          <div class="text-[10px] text-stone-600 mt-1.5 tracking-wider">pcs</div>
-          <div class="mt-3 pt-3 border-t border-white/[0.05] flex items-center gap-2">
-            <span class="font-mono text-[8px] tracking-[0.18em] uppercase text-stone-600">Loading Time</span>
-            <span id="estimasi1" class="font-mono text-[13px] text-gold font-medium">—</span>
+          <div id="shift-badge1" class="sh-badge">Shift 1 · 06:00–14:00</div>
+        </div>
+      </div><!-- /mesin A -->
+
+      <!-- MESIN B -->
+      <div class="mc" id="machine2">
+        <div class="mc-hdr">
+          <div style="display:flex;align-items:center;gap:9px">
+            <div class="mc-icon">⚙️</div>
+            <div>
+              <div class="mc-name">MESIN PACKING B</div>
+              <div class="mc-sub">Rotary Seal Unit</div>
+            </div>
           </div>
+          <span id="status2" class="badge badge-standby">Standby</span>
         </div>
-      </div>
-      <div class="grid grid-cols-2 gap-3.5 mb-5">
-        <div class="hover-lift bg-surface rounded-xl border border-emerald-500/10 p-5">
-          <div class="font-mono text-[9px] tracking-[0.2em] uppercase text-stone-500 mb-2.5">OUTPUT PRODUK</div>
-          <div id="inputOne1" class="font-mono text-[32px] font-light text-emerald-400 leading-none tracking-tighter">0</div>
-          <div class="text-[10px] text-stone-600 mt-1.5 tracking-wider">pcs</div>
-        </div>
-        <div class="hover-lift bg-surface rounded-xl border border-red-500/10 p-5">
-          <div class="font-mono text-[9px] tracking-[0.2em] uppercase text-stone-500 mb-2.5">OUTPUT LOSS PRODUK</div>
-          <div id="inputZero1" class="font-mono text-[32px] font-light text-red-400 leading-none tracking-tighter">0</div>
-          <div class="text-[10px] text-stone-600 mt-1.5 tracking-wider">pcs</div>
-        </div>
-      </div>
 
-      <div class="grid grid-cols-2 gap-3 mb-3">
-        <div class="bg-surface rounded-xl border border-white/[0.07] p-3.5 text-center">
-          <div class="font-mono text-[8px] tracking-[0.2em] uppercase text-stone-500 mb-2">Setup Time</div>
-          <div id="setupTime1" class="font-mono text-[15px] font-medium tracking-wide text-yellow-400/90">00:00:00</div>
-        </div>
-        <div class="bg-surface rounded-xl border border-amber-500/20 p-3.5 text-center">
-          <div class="font-mono text-[8px] tracking-[0.2em] uppercase text-stone-500 mb-1">Minor Breakdown</div>
-          <div id="minorBreakdown1" class="font-mono text-[15px] font-medium tracking-wide text-amber-400/90">00:00:00</div>
-          <div id="minorBreakdownSec1" class="font-mono text-[11px] text-amber-400/55 mt-1 tracking-wider">0.000 s</div>
-        </div>
-      </div>
-      <div class="grid grid-cols-2 gap-3 mb-6">
-        <div class="bg-surface rounded-xl border border-sky-500/20 p-3.5 text-center">
-          <div class="font-mono text-[8px] tracking-[0.2em] uppercase text-stone-500 mb-2">Runtime</div>
-          <div id="runtime1" class="font-mono text-[15px] font-medium tracking-wide text-sky-400/90">00:00:00</div>
-        </div>
-        <div class="bg-surface rounded-xl border border-white/[0.07] p-3.5 text-center">
-          <div class="font-mono text-[8px] tracking-[0.2em] uppercase text-stone-500 mb-2">Downtime</div>
-          <div id="downtime1" class="font-mono text-[15px] font-medium tracking-wide text-red-400/90">00:00:00</div>
-        </div>
-      </div>
-
-      <!-- Footer mesin 1: operator + shift badge dinamis -->
-      <div class="flex items-center justify-between pt-4 border-t border-white/[0.07]">
-        <div class="flex items-center gap-3">
-          <div class="w-8 h-8 rounded-full bg-gold/10 border border-gold/20 flex items-center justify-center text-sm">👤</div>
-          <div>
-            <div class="text-[13px] font-medium text-stone-200">Budi Santoso</div>
-            <div class="text-[10px] text-stone-500 tracking-wide">Machine Operator</div>
+        <div class="mc-body">
+          <div class="tile gold">
+            <div class="t-label">Total Output</div>
+            <div id="pieces2" class="t-val-xl" style="color:var(--gold-lt)">0</div>
+            <div class="t-unit">pcs terpacking</div>
+          </div>
+          <div class="tile gold">
+            <div class="t-label">Target Shift</div>
+            <div style="display:flex;align-items:baseline;gap:5px;flex-wrap:wrap">
+              <span id="target2" class="t-val-xl" style="color:var(--gold-lt)">0</span>
+              <span id="product-badge2" class="prod-badge" style="display:none">—</span>
+            </div>
+            <div class="t-unit">pcs</div>
+            <div class="load-row">
+              <span class="load-lbl">Loading</span>
+              <span id="estimasi2" class="load-val">—</span>
+            </div>
+          </div>
+          <div class="tile good">
+            <div class="t-label">Output Produk</div>
+            <div id="inputOne2" class="t-val-lg" style="color:var(--emerald)">0</div>
+            <div class="t-unit">pcs</div>
+          </div>
+          <div class="tile bad">
+            <div class="t-label">Output Loss</div>
+            <div id="inputZero2" class="t-val-lg" style="color:var(--red)">0</div>
+            <div class="t-unit">pcs</div>
+          </div>
+          <div class="times-col">
+            <div class="time-mini">
+              <div class="tm-lbl">Setup Time</div>
+              <div id="setupTime2" class="tm-val" style="color:rgba(250,204,21,.85)">00:00:00</div>
+            </div>
+            <div class="time-mini amber">
+              <div class="tm-lbl">Minor Breakdown</div>
+              <div id="minorBreakdown2" class="tm-val" style="color:var(--amber)">00:00:00</div>
+              <div id="minorBreakdownSec2" class="tm-sec">0.000 s</div>
+            </div>
+            <div class="time-mini sky">
+              <div class="tm-lbl">Runtime</div>
+              <div id="runtime2" class="tm-val" style="color:var(--sky)">00:00:00</div>
+            </div>
+            <div class="time-mini bad">
+              <div class="tm-lbl">Downtime</div>
+              <div id="downtime2" class="tm-val" style="color:var(--red)">00:00:00</div>
+            </div>
           </div>
         </div>
-        <!-- Shift badge — diupdate oleh dashboard.js via id="shift-badge1" -->
-        <div id="shift-badge1"
-          class="font-mono text-[9px] tracking-[0.12em] text-gold bg-gold/10 border border-gold/20 px-3 py-1.5 rounded-full">
-          Shift 1 · 06:00–14:00
+
+        <div class="mc-ftr">
+          <div style="display:flex;align-items:center;gap:7px">
+            <div class="op-av">👤</div>
+            <div>
+              <div class="op-name">Siti Nurhaliza</div>
+              <div class="op-role">Machine Operator</div>
+            </div>
+          </div>
+          <div id="shift-badge2" class="sh-badge">Shift 1 · 06:00–14:00</div>
         </div>
-      </div>
-    </div>
+      </div><!-- /mesin B -->
 
-    <!-- ─ MESIN 2 ─ -->
-    <div id="machine2"
-         class="relative overflow-hidden bg-card rounded-2xl border border-white/[0.07] p-8 fade-up-2">
-      <div class="watermark">2</div>
+    </div><!-- /machines-row -->
 
-      <div class="flex items-center justify-between mb-7">
-        <div class="flex items-center gap-3.5">
-          <div class="w-11 h-11 rounded-xl flex items-center justify-center text-xl
-                      bg-gold/10 border border-gold/20">⚙️</div>
-          <div>
-            <div class="font-serif text-[22px] font-semibold text-stone-100">MESIN PACKING B</div>
-            <div class="text-[11px] text-stone-500 tracking-wider mt-0.5">Rotary Seal Unit</div>
+    <!-- ── BOTTOM ROW ── -->
+    <div id="bottom-row">
+
+      <!-- Ringkasan Produksi -->
+      <div class="panel">
+        <div class="panel-hdr">
+          <div class="p-accent"></div>
+          <div class="p-title">Ringkasan Produksi Harian</div>
+          <div class="p-sub">Summary</div>
+        </div>
+        <div class="panel-body">
+          <!-- Top KPIs: 6 cols -->
+          <div class="sum-top">
+            <div class="s-box good">
+              <div class="s-lbl">Total Produksi</div>
+              <div id="total-production" class="s-val" style="color:var(--emerald)">0</div>
+            </div>
+            <div class="s-box gold">
+              <div class="s-lbl">Total Target</div>
+              <div id="total-target" class="s-val" style="color:var(--gold-lt)">0</div>
+            </div>
+            <div class="s-box violet">
+              <div class="s-lbl">Persentase</div>
+              <div id="total-percent" class="s-val" style="color:var(--violet)">0%</div>
+            </div>
+            <div class="s-box amber">
+              <div class="s-lbl">Mesin Aktif</div>
+              <div id="active-machines" class="s-val" style="color:var(--amber)">0</div>
+            </div>
+            <div class="s-box good">
+              <div class="s-lbl">Total Good</div>
+              <div id="total-input-good" class="s-val" style="color:var(--emerald)">0</div>
+            </div>
+            <div class="s-box bad">
+              <div class="s-lbl">Total Loss</div>
+              <div id="total-input-zero" class="s-val" style="color:var(--red)">0</div>
+            </div>
+          </div>
+          <!-- Time KPIs: 6 cols -->
+          <div class="sum-times">
+            <div class="s-box amber">
+              <div class="s-lbl">Avg Minor BD</div>
+              <div id="total-minor-breakdown" class="s-sm" style="color:var(--amber)">00:00:00</div>
+            </div>
+            <div class="s-box bad">
+              <div class="s-lbl">Avg Downtime</div>
+              <div id="total-downtime" class="s-sm" style="color:var(--red)">00:00:00</div>
+            </div>
+            <div class="s-box good">
+              <div class="s-lbl">Avg Loading</div>
+              <div id="total-loading-time" class="s-sm" style="color:var(--emerald)">00:00:00</div>
+            </div>
+            <div class="s-box sky">
+              <div class="s-lbl">Avg Setup</div>
+              <div id="total-setup-time" class="s-sm" style="color:var(--sky)">00:00:00</div>
+            </div>
+            <div class="s-box orange">
+              <div class="s-lbl">Op. Time</div>
+              <div id="total-operating-time" class="s-sm" style="color:#fb923c">00:00:00</div>
+            </div>
+            <div class="s-box">
+              <div class="s-lbl">Net Op. Time</div>
+              <div id="total-net-operating-time" class="s-sm" style="color:#d4cfc8">00:00:00</div>
+            </div>
           </div>
         </div>
-        <span id="status2"
-              class="font-mono text-[9px] tracking-[0.2em] uppercase px-3.5 py-1.5 rounded-full
-                     bg-white/[0.04] text-stone-500 border border-white/[0.07]">
-          Standby
-        </span>
-      </div>
+      </div><!-- /summary -->
 
-      <div class="grid grid-cols-2 gap-3.5 mb-3">
-        <div class="hover-lift bg-surface rounded-xl border border-white/[0.07] p-5">
-          <div class="font-mono text-[9px] tracking-[0.2em] uppercase text-stone-500 mb-2.5">TOTAL OUTPUT MESIN</div>
-          <div id="pieces2" class="font-mono text-[38px] font-light text-gold-lt leading-none tracking-tighter">0</div>
-          <div class="text-[10px] text-stone-600 mt-1.5 tracking-wider">pcs terpacking</div>
+      <!-- OEE -->
+      <div class="panel">
+        <div class="panel-hdr">
+          <div class="p-accent"></div>
+          <div class="p-title">OEE Rate</div>
+          <div class="p-sub">Overall Equipment Effectiveness · AR × PR × QR</div>
         </div>
-        <div class="hover-lift bg-surface rounded-xl border border-white/[0.07] p-5">
-          <div class="font-mono text-[9px] tracking-[0.2em] uppercase text-stone-500 mb-2.5">Target Shift</div>
-          <div class="flex items-baseline gap-3 flex-wrap">
-            <div id="target2" class="font-mono text-[38px] font-light text-gold-lt leading-none tracking-tighter">0</div>
-            <span id="product-badge2"
-              style="display:none; font-family:'DM Mono',monospace; font-size:10px;
-                     font-weight:500; color:#c5a860; background:rgba(197,168,96,0.1);
-                     border:1px solid rgba(197,168,96,0.22); border-radius:6px;
-                     padding:2px 9px; letter-spacing:0.04em; white-space:nowrap;">
-              —
-            </span>
+        <div class="panel-body">
+          <div class="gauge-row">
+            <div class="g-box">
+              <div class="g-lbl">Availability Rate</div>
+              <canvas id="gauge-ar" width="100" height="62"></canvas>
+              <div id="ar-value" class="g-val" style="color:#4ade80">0%</div>
+              <div id="ar-label" class="g-sub">—</div>
+            </div>
+            <div class="g-box">
+              <div class="g-lbl">Performance Rate</div>
+              <canvas id="gauge-pr" width="100" height="62"></canvas>
+              <div id="pr-value" class="g-val" style="color:var(--sky)">0%</div>
+              <div id="pr-label" class="g-sub">—</div>
+            </div>
+            <div class="g-box">
+              <div class="g-lbl">Quality Rate</div>
+              <canvas id="gauge-qr" width="100" height="62"></canvas>
+              <div id="qr-value" class="g-val" style="color:var(--violet)">0%</div>
+              <div id="qr-label" class="g-sub">—</div>
+            </div>
           </div>
-          <div class="text-[10px] text-stone-600 mt-1.5 tracking-wider">pcs</div>
-          <div class="mt-3 pt-3 border-t border-white/[0.05] flex items-center gap-2">
-            <span class="font-mono text-[8px] tracking-[0.18em] uppercase text-stone-600">Loading Time</span>
-            <span id="estimasi2" class="font-mono text-[13px] text-gold font-medium">—</span>
-          </div>
-        </div>
-      </div>
-      <div class="grid grid-cols-2 gap-3.5 mb-5">
-        <div class="hover-lift bg-surface rounded-xl border border-emerald-500/10 p-5">
-          <div class="font-mono text-[9px] tracking-[0.2em] uppercase text-stone-500 mb-2.5">OUTPUT PRODUK</div>
-          <div id="inputOne2" class="font-mono text-[32px] font-light text-emerald-400 leading-none tracking-tighter">0</div>
-          <div class="text-[10px] text-stone-600 mt-1.5 tracking-wider">pcs</div>
-        </div>
-        <div class="hover-lift bg-surface rounded-xl border border-red-500/10 p-5">
-          <div class="font-mono text-[9px] tracking-[0.2em] uppercase text-stone-500 mb-2.5">OUTPUT LOSS PRODUK</div>
-          <div id="inputZero2" class="font-mono text-[32px] font-light text-red-400 leading-none tracking-tighter">0</div>
-          <div class="text-[10px] text-stone-600 mt-1.5 tracking-wider">pcs</div>
-        </div>
-      </div>
-
-      <div class="grid grid-cols-2 gap-3 mb-3">
-        <div class="bg-surface rounded-xl border border-white/[0.07] p-3.5 text-center">
-          <div class="font-mono text-[8px] tracking-[0.2em] uppercase text-stone-500 mb-2">Setup Time</div>
-          <div id="setupTime2" class="font-mono text-[15px] font-medium tracking-wide text-yellow-400/90">00:00:00</div>
-        </div>
-        <div class="bg-surface rounded-xl border border-amber-500/20 p-3.5 text-center">
-          <div class="font-mono text-[8px] tracking-[0.2em] uppercase text-stone-500 mb-1">Minor Breakdown</div>
-          <div id="minorBreakdown2" class="font-mono text-[15px] font-medium tracking-wide text-amber-400/90">00:00:00</div>
-          <div id="minorBreakdownSec2" class="font-mono text-[11px] text-amber-400/55 mt-1 tracking-wider">0.000 s</div>
-        </div>
-      </div>
-      <div class="grid grid-cols-2 gap-3 mb-6">
-        <div class="bg-surface rounded-xl border border-sky-500/20 p-3.5 text-center">
-          <div class="font-mono text-[8px] tracking-[0.2em] uppercase text-stone-500 mb-2">Runtime</div>
-          <div id="runtime2" class="font-mono text-[15px] font-medium tracking-wide text-sky-400/90">00:00:00</div>
-        </div>
-        <div class="bg-surface rounded-xl border border-white/[0.07] p-3.5 text-center">
-          <div class="font-mono text-[8px] tracking-[0.2em] uppercase text-stone-500 mb-2">Downtime</div>
-          <div id="downtime2" class="font-mono text-[15px] font-medium tracking-wide text-red-400/90">00:00:00</div>
-        </div>
-      </div>
-
-      <!-- Footer mesin 2: operator + shift badge dinamis -->
-      <div class="flex items-center justify-between pt-4 border-t border-white/[0.07]">
-        <div class="flex items-center gap-3">
-          <div class="w-8 h-8 rounded-full bg-gold/10 border border-gold/20 flex items-center justify-center text-sm">👤</div>
-          <div>
-            <div class="text-[13px] font-medium text-stone-200">Siti Nurhaliza</div>
-            <div class="text-[10px] text-stone-500 tracking-wide">Machine Operator</div>
+          <div class="oee-row">
+            <div class="oee-lbl">OEE Score = AR × PR × QR</div>
+            <div class="oee-track">
+              <div id="oee-bar" class="oee-fill" style="width:0%"></div>
+            </div>
+            <div id="oee-value" class="oee-val">0%</div>
           </div>
         </div>
-        <div id="shift-badge2"
-          class="font-mono text-[9px] tracking-[0.12em] text-gold bg-gold/10 border border-gold/20 px-3 py-1.5 rounded-full">
-          Shift 1 · 06:00–14:00
-        </div>
-      </div>
-    </div>
-  </div>
+      </div><!-- /oee -->
 
-  <!-- ══ SUMMARY ══ -->
-  <div class="bg-card rounded-2xl border border-white/[0.07] p-8 mb-5 fade-up-3">
-    <div class="flex items-center gap-4 mb-7">
-      <div class="w-[3px] h-7 rounded-sm" style="background: linear-gradient(180deg,#c5a860,transparent)"></div>
-      <h2 class="font-serif text-[21px] font-semibold text-stone-100">Ringkasan Produksi Harian</h2>
-    </div>
+    </div><!-- /bottom-row -->
 
-    <div class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3.5 mb-3.5">
-      <div class="hover-lift bg-surface rounded-xl border border-white/[0.07] p-6 text-center">
-        <div class="font-mono text-[8px] tracking-[0.22em] uppercase text-stone-500 mb-3">Total Produksi</div>
-        <div id="total-production" class="font-mono text-[32px] font-light leading-none text-emerald-400">0</div>
-      </div>
-      <div class="hover-lift bg-surface rounded-xl border border-white/[0.07] p-6 text-center">
-        <div class="font-mono text-[8px] tracking-[0.22em] uppercase text-stone-500 mb-3">Total Target</div>
-        <div id="total-target" class="font-mono text-[32px] font-light leading-none text-gold-lt">0</div>
-      </div>
-      <div class="hover-lift bg-surface rounded-xl border border-white/[0.07] p-6 text-center">
-        <div class="font-mono text-[8px] tracking-[0.22em] uppercase text-stone-500 mb-3">Persentase</div>
-        <div id="total-percent" class="font-mono text-[32px] font-light leading-none text-violet-400">0%</div>
-      </div>
-      <div class="hover-lift bg-surface rounded-xl border border-white/[0.07] p-6 text-center">
-        <div class="font-mono text-[8px] tracking-[0.22em] uppercase text-stone-500 mb-3">Mesin Aktif</div>
-        <div id="active-machines" class="font-mono text-[32px] font-light leading-none text-amber-400">0</div>
-      </div>
-      <div class="hover-lift bg-surface rounded-xl border border-emerald-500/10 p-6 text-center">
-        <div class="font-mono text-[8px] tracking-[0.22em] uppercase text-stone-500 mb-3">Total Good (1)</div>
-        <div id="total-input-good" class="font-mono text-[32px] font-light leading-none text-emerald-400">0</div>
-      </div>
-      <div class="hover-lift bg-surface rounded-xl border border-red-500/10 p-6 text-center">
-        <div class="font-mono text-[8px] tracking-[0.22em] uppercase text-stone-500 mb-3">Total No Obj (0)</div>
-        <div id="total-input-zero" class="font-mono text-[32px] font-light leading-none text-red-400">0</div>
-      </div>
-    </div>
+  </div><!-- /main -->
 
-    <div class="grid grid-cols-2 md:grid-cols-4 gap-3.5">
-      <div class="hover-lift bg-surface rounded-xl border border-amber-500/20 p-6 text-center">
-        <div class="font-mono text-[8px] tracking-[0.22em] uppercase text-stone-500 mb-1">Rata-rata Minor Breakdown</div>
-        <div class="font-mono text-[9px] text-stone-600 tracking-wider mb-3">(Mesin A + Mesin B) ÷ 2</div>
-        <div id="total-minor-breakdown" class="font-mono text-[28px] font-light leading-none text-amber-400">00:00:00</div>
-      </div>
-      <div class="hover-lift bg-surface rounded-xl border border-red-500/20 p-6 text-center">
-        <div class="font-mono text-[8px] tracking-[0.22em] uppercase text-stone-500 mb-1">Rata-rata Downtime</div>
-        <div class="font-mono text-[9px] text-stone-600 tracking-wider mb-3">(Mesin A + Mesin B) ÷ 2</div>
-        <div id="total-downtime" class="font-mono text-[28px] font-light leading-none text-red-400">00:00:00</div>
-      </div>
-      <div class="hover-lift bg-surface rounded-xl border border-red-500/20 p-6 text-center">
-        <div class="font-mono text-[8px] tracking-[0.22em] uppercase text-stone-500 mb-1">Rata-rata Loading Time</div>
-        <div class="font-mono text-[9px] text-stone-600 tracking-wider mb-3">(Mesin A + Mesin B) ÷ 2</div>
-        <div id="total-loading-time" class="font-mono text-[28px] font-light leading-none text-green-400">00:00:00</div>
-      </div>
-      <div class="hover-lift bg-surface rounded-xl border border-red-500/20 p-6 text-center">
-        <div class="font-mono text-[8px] tracking-[0.22em] uppercase text-stone-500 mb-1">Rata-rata Setup Time</div>
-        <div class="font-mono text-[9px] text-stone-600 tracking-wider mb-3">(Mesin A + Mesin B) ÷ 2</div>
-        <div id="total-setup-time" class="font-mono text-[28px] font-light leading-none text-blue-400">00:00:00</div>
-      </div>
-      <div class="hover-lift bg-surface rounded-xl border border-red-500/20 p-6 text-center">
-        <div class="font-mono text-[8px] tracking-[0.22em] uppercase text-stone-500 mb-1">Operation Time</div>
-        <div class="font-mono text-[9px] text-stone-600 tracking-wider mb-3">(Mesin A + Mesin B) ÷ 2</div>
-        <div id="total-operating-time" class="font-mono text-[28px] font-light leading-none text-orange-400">00:00:00</div>
-      </div>
-      <div class="hover-lift bg-surface rounded-xl border border-red-500/20 p-6 text-center">
-        <div class="font-mono text-[8px] tracking-[0.22em] uppercase text-stone-500 mb-1">Net Operation Time</div>
-        <div class="font-mono text-[9px] text-stone-600 tracking-wider mb-3">(Mesin A + Mesin B) ÷ 2</div>
-        <div id="total-net-operating-time" class="font-mono text-[28px] font-light leading-none text-white-400">00:00:00</div>
-      </div>
-    </div>
+  <!-- ══ FOOTER ══ -->
+  <footer id="ftr">
+    <div>MQTT — <span id="mqtt-status">Connecting...</span></div>
+    <div>Last update — <span id="update-time">--:--:--</span></div>
+  </footer>
 
-    <div class="flex justify-between items-center pt-5 mt-4 border-t border-white/[0.07]">
-      <div class="font-mono text-[10px] tracking-widest text-stone-500">
-        MQTT — <span id="mqtt-status" class="text-gold">Connecting...</span>
-      </div>
-      <div class="font-mono text-[10px] tracking-widest text-stone-500">
-        Last update — <span id="update-time" class="text-gold">--:--:--</span>
-      </div>
-    </div>
-  </div>
-
-  <!-- ══ OEE GAUGES ══ -->
-  <div class="bg-card rounded-2xl border border-white/[0.07] p-8 fade-up-4">
-    <div class="flex items-center justify-between mb-2">
-      <div class="flex items-center gap-4">
-        <div class="w-[3px] h-7 rounded-sm" style="background: linear-gradient(180deg,#c5a860,transparent)"></div>
-        <h2 class="font-serif text-[21px] font-semibold text-stone-100">OEE Rate</h2>
-      </div>
-      <div class="font-mono text-[9px] tracking-[0.18em] uppercase text-stone-500">
-        Overall Equipment Effectiveness
-      </div>
-    </div>
-    <p class="font-mono text-[9px] text-stone-600 tracking-wider mb-8 ml-[19px]">
-      Availability · Performance · Quality
-    </p>
-
-    <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
-      <div class="bg-surface rounded-2xl border border-white/[0.07] p-6 flex flex-col items-center">
-        <div class="font-mono text-[9px] tracking-[0.22em] uppercase text-stone-500 mb-1">Availability Rate</div>
-        <div class="font-mono text-[9px] text-stone-600 tracking-wider mb-4">AR = Runtime / Total Time</div>
-        <div class="relative w-full" style="max-width:240px">
-          <canvas id="gauge-ar" width="240" height="140"></canvas>
-        </div>
-        <div id="ar-value" class="font-mono text-[38px] font-light leading-none mt-1" style="color:#4ade80">0%</div>
-        <div id="ar-label" class="font-mono text-[9px] tracking-[0.15em] uppercase mt-2 text-stone-500">—</div>
-      </div>
-
-      <div class="bg-surface rounded-2xl border border-white/[0.07] p-6 flex flex-col items-center">
-        <div class="font-mono text-[9px] tracking-[0.22em] uppercase text-stone-500 mb-1">Performance Rate</div>
-        <div class="font-mono text-[9px] text-stone-600 tracking-wider mb-4">PR = Actual / Target Output</div>
-        <div class="relative w-full" style="max-width:240px">
-          <canvas id="gauge-pr" width="240" height="140"></canvas>
-        </div>
-        <div id="pr-value" class="font-mono text-[38px] font-light leading-none mt-1" style="color:#60a5fa">0%</div>
-        <div id="pr-label" class="font-mono text-[9px] tracking-[0.15em] uppercase mt-2 text-stone-500">—</div>
-      </div>
-
-      <div class="bg-surface rounded-2xl border border-white/[0.07] p-6 flex flex-col items-center">
-        <div class="font-mono text-[9px] tracking-[0.22em] uppercase text-stone-500 mb-1">Quality Rate</div>
-        <div class="font-mono text-[9px] text-stone-600 tracking-wider mb-4">QR = Good / Total Output Mesin</div>
-        <div class="relative w-full" style="max-width:240px">
-          <canvas id="gauge-qr" width="240" height="140"></canvas>
-        </div>
-        <div id="qr-value" class="font-mono text-[38px] font-light leading-none mt-1" style="color:#a78bfa">0%</div>
-        <div id="qr-label" class="font-mono text-[9px] tracking-[0.15em] uppercase mt-2 text-stone-500">—</div>
-      </div>
-    </div>
-
-    <div class="mt-6 pt-6 border-t border-white/[0.07] flex items-center justify-between">
-      <div class="flex items-center gap-3">
-        <div class="font-mono text-[9px] tracking-[0.2em] uppercase text-stone-500">OEE Score</div>
-        <div class="font-mono text-[9px] text-stone-600">= AR × PR × QR</div>
-      </div>
-      <div class="flex items-center gap-4">
-        <div id="oee-bar-wrap" class="h-2 w-48 bg-white/[0.07] rounded-full overflow-hidden">
-          <div id="oee-bar" class="h-full rounded-full progress-bar" style="width:0%; background: linear-gradient(90deg,#c5a860,#e2c97e); box-shadow: 0 0 10px rgba(197,168,96,0.5);"></div>
-        </div>
-        <div id="oee-value" class="font-mono text-[28px] font-light text-gold-lt leading-none">0%</div>
-      </div>
-    </div>
-  </div>
-
-</div><!-- /wrapper -->
+</div><!-- /root -->
 
 <script src="dashboard.js"></script>
 <script>
@@ -455,7 +583,7 @@
     const n = new Date();
     document.getElementById('clock').innerText = n.toLocaleTimeString('id-ID');
     document.getElementById('date-label').innerText =
-      n.toLocaleDateString('id-ID', { weekday:'long', day:'numeric', month:'long', year:'numeric' });
+      n.toLocaleDateString('id-ID',{weekday:'short',day:'numeric',month:'long',year:'numeric'});
   }
   tick(); setInterval(tick, 1000);
 </script>

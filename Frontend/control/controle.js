@@ -296,7 +296,7 @@ document.addEventListener('DOMContentLoaded', () => {
     t.classList.add('show');clearTimeout(t._t);t._t=setTimeout(()=>t.classList.remove('show'),3000);
   }
 
-  const mqttClient = mqtt.connect('wss://broker.hivemq.com:8884/mqtt');
+  const mqttClient = mqtt.connect('ws://192.168.2.92:9002');
 
   mqttClient.on('connect', () => {
     console.log('✅ MQTT Connected (Mesin 1)');

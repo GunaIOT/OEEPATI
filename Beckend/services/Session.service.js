@@ -167,11 +167,27 @@ async function getSessions({ tgl, shift } = {}) {
   return rows;
 }
 
+// ── TAMBAHAN: Cek session aktif berdasarkan tgl + shift
+// Dipakai oleh GET /api/session/active untuk fix multi-device
+async function getActiveSession({ tgl, shift } = {}) {
+  if (!tgl || !shift) return null;
+
+  const [rows] = await pool.execute(
+    `SELECT id FROM hasil_produksi
+     WHERE tgl_produksi = ? AND shift = ?
+     ORDER BY id DESC LIMIT 1`,
+    [tgl, parseInt(shift)]
+  );
+
+  return rows.length > 0 ? rows[0] : null;
+}
+
 module.exports = {
   insertRejectSession,
   getRejectSessions,
   insertSession,
   updateSession,
   getSessions,
-  calcOEE
+  calcOEE,
+  getActiveSession,   // ← export baru
 };

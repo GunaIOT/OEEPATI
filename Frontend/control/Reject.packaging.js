@@ -427,7 +427,7 @@ document.addEventListener('DOMContentLoaded', () => {
     else if (e.key === 'Delete')    numpadClear();
   });
 
-  const mqttClient = mqtt.connect('wss://broker.hivemq.com:8884/mqtt');
+  const mqttClient = mqtt.connect("mqtt://192.168.2.92:1883");
 
   mqttClient.on('connect', () => {
     console.log('[Reject] MQTT Connected');
@@ -465,7 +465,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     if (topic === 'oee/reject/total') {
       const val = parseInt(p) || 0;
-      if (!hasSubmittedThisSession && val > totalSubmittedReject) {
+       if (!hasSubmittedThisSession && val > totalSubmittedReject) {
         totalSubmittedReject = val;
         saveState();
         updateDisplay();

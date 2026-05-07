@@ -455,7 +455,7 @@ function clearMachineState(machineNum) {
   console.log(`[Dashboard] State mesin ${machineNum} di-clear`);
 }
 
-const mqttClient = mqtt.connect('wss://broker.hivemq.com:8884/mqtt');
+const mqttClient = mqtt.connect('ws://192.168.2.92:9002');
 
 mqttClient.on('connect', () => {
   console.log('✅ MQTT Connected');
@@ -684,7 +684,6 @@ setInterval(() => {
 }, 5000);
 
 setInterval(saveDashState, 10000);
-
 function drawGauge(canvasId, pct, color) {
   const canvas = el(canvasId);
   if (!canvas) return;
@@ -693,36 +692,85 @@ function drawGauge(canvasId, pct, color) {
   const cx = W / 2, cy = H - 10;
   const r  = Math.min(W * 0.42, H * 0.88);
   ctx.clearRect(0, 0, W, H);
-  const SA = Math.PI, EA = 2 * Math.PI;
-  ctx.beginPath(); ctx.arc(cx, cy, r, SA, EA);
-  ctx.strokeStyle = 'rgba(255,255,255,0.06)'; ctx.lineWidth = 16; ctx.lineCap = 'round'; ctx.stroke();
-  [{f:0,t:.45,c:'rgba(248,113,113,0.18)'},{f:.45,t:.65,c:'rgba(251,146,60,0.18)'},
-   {f:.65,t:.85,c:'rgba(250,204,21,0.18)'},{f:.85,t:1,c:'rgba(74,222,128,0.18)'}].forEach(z => {
-    ctx.beginPath(); ctx.arc(cx, cy, r, SA+z.f*Math.PI, SA+z.t*Math.PI);
-    ctx.strokeStyle = z.c; ctx.lineWidth = 16; ctx.lineCap = 'butt'; ctx.stroke();
+
+  const START = Math.PI;
+  const END   = 2 * Math.PI;
+
+  ctx.beginPath();
+  ctx.arc(cx, cy, r, START, END);
+  ctx.strokeStyle = 'rgba(255,255,255,0.06)';
+  ctx.lineWidth   = 16;
+  ctx.lineCap     = 'round';
+  ctx.stroke();
+
+  const zones = [
+    { f: 0,    t: 0.45, c: 'rgba(248,113,113,0.18)' },
+    { f: 0.45, t: 0.65, c: 'rgba(251,146,60,0.18)'  },
+    { f: 0.65, t: 0.85, c: 'rgba(250,204,21,0.18)'  },
+    { f: 0.85, t: 1,    c: 'rgba(74,222,128,0.18)'  },
+  ];
+  zones.forEach(z => {
+    ctx.beginPath();
+    ctx.arc(cx, cy, r, START + z.f * Math.PI, START + z.t * Math.PI);
+    ctx.strokeStyle = z.c;
+    ctx.lineWidth   = 16;
+    ctx.lineCap     = 'butt';
+    ctx.stroke();
   });
+
   const c = Math.min(Math.max(pct, 0), 100);
   if (c > 0) {
-    ctx.beginPath(); ctx.arc(cx, cy, r, SA, SA+(c/100)*Math.PI);
-    ctx.strokeStyle = color; ctx.lineWidth = 16; ctx.lineCap = 'round';
-    ctx.shadowColor = color; ctx.shadowBlur = 18; ctx.stroke(); ctx.shadowBlur = 0;
+    ctx.beginPath();
+    ctx.arc(cx, cy, r, START, START + (c / 100) * Math.PI);
+    ctx.strokeStyle = color;
+    ctx.lineWidth   = 16;
+    ctx.lineCap     = 'round';
+    ctx.shadowColor = color;
+    ctx.shadowBlur  = 18;
+    ctx.stroke();
+    ctx.shadowBlur  = 0;
   }
   [0, 25, 50, 75, 100].forEach(t => {
-    const a = SA+(t/100)*Math.PI;
-    ctx.beginPath(); ctx.moveTo(cx+(r-22)*Math.cos(a), cy+(r-22)*Math.sin(a));
-    ctx.lineTo(cx+(r-8)*Math.cos(a), cy+(r-8)*Math.sin(a));
-    ctx.strokeStyle = 'rgba(255,255,255,0.25)'; ctx.lineWidth = 1.5; ctx.lineCap = 'round'; ctx.stroke();
+    const a = START + (t / 100) * Math.PI;
+    ctx.beginPath();
+    ctx.moveTo(cx + (r - 22) * Math.cos(a), cy + (r - 22) * Math.sin(a));
+    ctx.lineTo(cx + (r - 8)  * Math.cos(a), cy + (r - 8)  * Math.sin(a));
+    ctx.strokeStyle = 'rgba(255,255,255,0.25)';
+    ctx.lineWidth   = 1.5;
+    ctx.lineCap     = 'round';
+    ctx.stroke();
   });
-  const na = SA+(c/100)*Math.PI;
-  ctx.beginPath(); ctx.moveTo(cx, cy); ctx.lineTo(cx+(r-26)*Math.cos(na), cy+(r-26)*Math.sin(na));
-  ctx.strokeStyle = '#fff'; ctx.lineWidth = 2.5; ctx.lineCap = 'round';
-  ctx.shadowColor = '#fff'; ctx.shadowBlur = 8; ctx.stroke(); ctx.shadowBlur = 0;
-  ctx.beginPath(); ctx.arc(cx, cy, 6, 0, Math.PI*2);
-  ctx.fillStyle = color; ctx.shadowColor = color; ctx.shadowBlur = 12; ctx.fill(); ctx.shadowBlur = 0;
-  ctx.font = '400 9px "DM Mono",monospace'; ctx.fillStyle = 'rgba(255,255,255,0.28)';
-  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-  [['0',SA],['50',SA+.5*Math.PI],['100',EA]].forEach(([l,a]) => {
-    ctx.fillText(l, cx+(r+18)*Math.cos(a), cy+(r+18)*Math.sin(a));
+
+  const na = START + (c / 100) * Math.PI;
+  ctx.beginPath();
+  ctx.moveTo(cx, cy);
+  ctx.lineTo(cx + (r - 26) * Math.cos(na), cy + (r - 26) * Math.sin(na));
+  ctx.strokeStyle = '#fff';
+  ctx.lineWidth   = 2.5;
+  ctx.lineCap     = 'round';
+  ctx.shadowColor = '#fff';
+  ctx.shadowBlur  = 8;
+  ctx.stroke();
+  ctx.shadowBlur  = 0;
+
+  ctx.beginPath();
+  ctx.arc(cx, cy, 6, 0, Math.PI * 2);
+  ctx.fillStyle   = color;
+  ctx.shadowColor = color;
+  ctx.shadowBlur  = 12;
+  ctx.fill();
+  ctx.shadowBlur  = 0;
+
+  ctx.font         = '400 9px "DM Mono",monospace';
+  ctx.fillStyle    = 'rgba(255,255,255,0.28)';
+  ctx.textAlign    = 'center';
+  ctx.textBaseline = 'middle';
+  [
+    ['0',   START],
+    ['50',  START + 0.5 * Math.PI],
+    ['100', END],
+  ].forEach(([label, angle]) => {
+    ctx.fillText(label, cx + (r + 18) * Math.cos(angle), cy + (r + 18) * Math.sin(angle));
   });
 }
 
@@ -784,7 +832,6 @@ function updateOEE() {
   if (el('oee-bar'))   el('oee-bar').style.width = Math.min(oeeR, 100) + '%';
   saveDashState();
 }
-
 const API_BASE       = `http://${window.location.hostname}:3000/api`;
 const DB_SESSION_KEY = 'oee_dashboard_session_id';
 
@@ -815,14 +862,38 @@ function getDbPayload() {
   };
 }
 
-async function dbInsertSession() {
+async function dbFindOrInsertSession() {
   if (_dbInsertLock) {
     console.warn('[Dashboard DB] INSERT diabaikan — mutex aktif');
     return;
   }
   _dbInsertLock = true;
-  localStorage.setItem(DB_SESSION_KEY, 'pending');
+
   try {
+    const tgl   = setupInfo1.date  || new Date().toISOString().split('T')[0];
+    const shift = setupInfo1.shift || 1;
+
+    console.log(`[Dashboard DB] Cek session aktif tgl=${tgl} shift=${shift}...`);
+    let existingId = null;
+    try {
+      const checkRes  = await fetch(`${API_BASE}/session/active?tgl=${tgl}&shift=${shift}`);
+      const checkData = await checkRes.json();
+      if (checkData.ok && checkData.session_id) {
+        existingId = checkData.session_id;
+        console.log(`[Dashboard DB] ✅ Session aktif ditemukan id=${existingId} — pakai yang sudah ada`);
+      }
+    } catch(e) {
+      console.warn('[Dashboard DB] /session/active tidak tersedia, fallback ke INSERT:', e.message);
+    }
+
+    if (existingId) {
+      dbSessionId = existingId;
+      localStorage.setItem(DB_SESSION_KEY, String(dbSessionId));
+      startDbSaveInterval();
+      return;
+    }
+    console.log('[Dashboard DB] Tidak ada session aktif — INSERT baru...');
+    localStorage.setItem(DB_SESSION_KEY, 'pending');
     const res  = await fetch(`${API_BASE}/session/start`, {
       method:  'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -832,7 +903,7 @@ async function dbInsertSession() {
     if (data.ok) {
       dbSessionId = data.session_id;
       localStorage.setItem(DB_SESSION_KEY, String(dbSessionId));
-      console.log(`[Dashboard DB] ✅ INSERT sesi awal id=${dbSessionId}`);
+      console.log(`[Dashboard DB] ✅ INSERT session baru id=${dbSessionId}`);
       startDbSaveInterval();
     } else {
       localStorage.removeItem(DB_SESSION_KEY);
@@ -840,10 +911,14 @@ async function dbInsertSession() {
     }
   } catch(err) {
     localStorage.removeItem(DB_SESSION_KEY);
-    console.warn('[Dashboard DB] INSERT error:', err.message);
+    console.warn('[Dashboard DB] Error:', err.message);
   } finally {
     _dbInsertLock = false;
   }
+}
+
+async function dbInsertSession() {
+  await dbFindOrInsertSession();
 }
 
 let _dbUpdateTimer = null;
@@ -891,7 +966,7 @@ function startDbSaveInterval() {
   dbSaveInterval = setInterval(dbUpdateSession, 60 * 1000);
 }
 const DT_SESSION_KEY = 'oee_downtime_session_id';
-let dtSessionId = null;
+let dtSessionId    = null;
 let _dtUpdateTimer = null;
  
 function getDtPayload() {
@@ -901,17 +976,33 @@ function getDtPayload() {
   const mbLiveM2    = (state2.minorBreakdownAcc || 0) + getWatchTotal(state2);
   const avgMinorMs  = (mbLiveM1 + mbLiveM2) / 2;
   return {
-    tgl_produksi:     setupInfo1.date    || new Date().toISOString().split('T')[0],
-    shift:            setupInfo1.shift   || 1,
-    product:          setupInfo1.product || '-',
-    total_minor_ms:   Math.round(avgMinorMs),
-    total_setup_ms:   Math.round(avgSetupMs),
+    tgl_produksi:      setupInfo1.date    || new Date().toISOString().split('T')[0],
+    shift:             setupInfo1.shift   || 1,
+    product:           setupInfo1.product || '-',
+    total_minor_ms:    Math.round(avgMinorMs),
+    total_setup_ms:    Math.round(avgSetupMs),
     total_downtime_ms: Math.round(totalDtMs),
   };
 }
  
 async function dtInsertSession() {
   try {
+
+    const tgl   = setupInfo1.date  || new Date().toISOString().split('T')[0];
+    const shift = setupInfo1.shift || 1;
+    try {
+      const checkRes  = await fetch(`${API_BASE}/downtime/active?tgl=${tgl}&shift=${shift}`);
+      const checkData = await checkRes.json();
+      if (checkData.ok && checkData.session_id) {
+        dtSessionId = checkData.session_id;
+        localStorage.setItem(DT_SESSION_KEY, String(dtSessionId));
+        console.log(`[DB Downtime] ✅ Session aktif ditemukan id=${dtSessionId}`);
+        return;
+      }
+    } catch(e) {
+      console.warn('[DB Downtime] /downtime/active tidak tersedia, fallback ke INSERT:', e.message);
+    }
+
     const res  = await fetch(`${API_BASE}/downtime/update/start`, {
       method:  'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -965,8 +1056,8 @@ async function dtUpdateSessionNow() {
     console.log(`[DB Downtime] Lanjut sesi id=${dtSessionId}`);
   } 
 })();
-function triggerDowntimeSession() {
 
+function triggerDowntimeSession() {
   if (!dtSessionId && !state1.inSetup && !state2.inSetup) {
     console.log("[Downtime] Setup selesai → buat sesi downtime");
     dtInsertSession();
@@ -1020,14 +1111,12 @@ let _tabActive = true;
   }
 })();
 
-
 (async function initDashboardDb() {
   ['oee_mesin1_session_id', 'oee_mesin2_session_id'].forEach(k => {
     try { localStorage.removeItem(k); } catch(e) {}
   });
 
   const saved = localStorage.getItem(DB_SESSION_KEY);
-
   if (saved === 'pending') {
     console.log('[Dashboard DB] Status pending — tunggu 3 detik...');
     await new Promise(r => setTimeout(r, 3000));
@@ -1036,23 +1125,37 @@ let _tabActive = true;
       dbSessionId = parseInt(afterWait) || null;
       console.log(`[Dashboard DB] Lanjut sesi id=${dbSessionId}`);
     } else {
-      console.warn('[Dashboard DB] Pending timeout — INSERT ulang');
+      console.warn('[Dashboard DB] Pending timeout — cek server atau INSERT ulang');
       localStorage.removeItem(DB_SESSION_KEY);
-      await dbInsertSession();
+      await dbFindOrInsertSession();
     }
     startDbSaveInterval();
     return;
   }
 
   if (saved) {
-    dbSessionId = parseInt(saved) || null;
-    console.log(`[Dashboard DB] ✅ Lanjut sesi id=${dbSessionId}`);
-    startDbSaveInterval();
-    return;
+    const localId = parseInt(saved) || null;
+    if (localId) {
+      try {
+        const verRes  = await fetch(`${API_BASE}/session/${localId}`);
+        const verData = await verRes.json();
+        if (verData.ok || verRes.ok) {
+          dbSessionId = localId;
+          console.log(`[Dashboard DB] ✅ Lanjut sesi lokal id=${dbSessionId}`);
+          startDbSaveInterval();
+          return;
+        }
+      } catch(e) {
+        dbSessionId = localId;
+        console.warn(`[Dashboard DB] Verifikasi gagal — pakai id lokal ${localId}`);
+        startDbSaveInterval();
+        return;
+      }
+    }
   }
 
-  console.log('[Dashboard DB] Pertama kali buka — INSERT sesi baru...');
-  await dbInsertSession();
+  console.log('[Dashboard DB] Tidak ada session lokal — cek server...');
+  await dbFindOrInsertSession();
 })();
 
 updateDisplay1();
@@ -1075,8 +1178,7 @@ setInterval(() => {
   if (el('total-downtime')) el('total-downtime').innerText = formatTime(Math.round((dtA + dtB) / 2));
 }, 500);
 
-console.log('✅ dashboard.js loaded — FIX: reject sync via oee/reject/total saja (tidak dobel dari oee/reject/data)');
-
+console.log('✅ dashboard.js loaded — FIX: gauge 0→100% | multi-device session deduplication via server');
 
 setInterval(() => {
   if (dtSessionId) {

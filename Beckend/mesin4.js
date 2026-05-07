@@ -5,9 +5,11 @@ require('dotenv').config();
 
 const app = express();
 
+// Middleware
 app.use(cors());
 app.use(express.json());
 
+// Routes
 const sensorRoutes   = require('./routes/sensor.routes');
 const sessionRoutes  = require('./routes/session.routes');
 const rejectRoutes   = require('./routes/Reject.routes');
@@ -18,13 +20,15 @@ app.use('/api/session',  sessionRoutes);
 app.use('/api/reject',   rejectRoutes);
 app.use('/api/downtime', downtimeRoutes);
 
+// Static frontend
 app.use(express.static(path.join(__dirname, '../Frontend')));
 
+// Default route
 app.get('/', (req, res) => {
   res.sendFile(path.join(__dirname, '../Frontend/dashboard/home.html'));
 });
 
-
+// Server
 const PORT = process.env.PORT || 3000;
 
 app.listen(PORT, '0.0.0.0', () => {

@@ -102,7 +102,19 @@ async function getPopupDowntime({ tgl, shift } = {}) {
   return rows;
 }
 
+async function getActiveDowntimeSession({ tgl, shift } = {}) {
+  if (!tgl || !shift) return null;
+  const [rows] = await pool.execute(
+    `SELECT id FROM updateDowntime_m4
+     WHERE tgl_produksi = ? AND shift = ?
+     ORDER BY id DESC LIMIT 1`,
+    [tgl, parseInt(shift)]
+  );
+ 
+  return rows.length > 0 ? rows[0] : null;
+}
 module.exports = {
+  getActiveDowntimeSession,
   insertUpdateDowntime,
   updateUpdateDowntime,
   getUpdateDowntime,
