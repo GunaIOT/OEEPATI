@@ -110,17 +110,6 @@ async function getActiveSession({ tgl, shift } = {}) {
   return rows.length > 0 ? rows[0] : null;
 }
 
-// ── Ambil seluruh kolom session by ID — dipakai dashboard untuk sync state ke semua device
-// CATATAN: Jika kolom target_m1/target_m2/setup_time_ms/minor_breakdown_ms/downtime_ms/total_reject
-//          belum ada di tabel hasil_produksi, jalankan migration ini dulu:
-//
-// ALTER TABLE hasil_produksi
-//   ADD COLUMN IF NOT EXISTS target_m1         INT     DEFAULT 0,
-//   ADD COLUMN IF NOT EXISTS target_m2         INT     DEFAULT 0,
-//   ADD COLUMN IF NOT EXISTS total_reject       INT     DEFAULT 0,
-//   ADD COLUMN IF NOT EXISTS setup_time_ms      BIGINT  DEFAULT 0,
-//   ADD COLUMN IF NOT EXISTS minor_breakdown_ms BIGINT  DEFAULT 0,
-//   ADD COLUMN IF NOT EXISTS downtime_ms        BIGINT  DEFAULT 0;
 async function getSessionById(sessionId) {
   const [rows] = await pool.execute(
     `SELECT id, tgl_produksi, shift, product,

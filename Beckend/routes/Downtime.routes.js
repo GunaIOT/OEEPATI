@@ -3,7 +3,7 @@ const router  = express.Router();
 const {
   insertUpdateDowntime, updateUpdateDowntime, getUpdateDowntime,
   insertPopupDowntime,  getPopupDowntime,
-  getActiveDowntimeSession,
+  getActiveDowntimeSession,closeActiveDowntimeSession,
 } = require('../services/Downtime.service');
 
 // ── GET /api/downtime/active — cek session aktif (fix multi-device)
@@ -25,10 +25,18 @@ router.post('/update/start', async (req, res) => {
   try {
     // Cek dulu — jangan INSERT kalau sudah ada session aktif
     const { tgl_produksi, shift } = req.body;
+    if (req.body.force_new_session === true) {
+      await closeActiveDowntimeSession({
+        tgl: tgl_produksi,
+        shift: parseInt(shift, 10),
+      });
+      console.log('[DB] Session lama ditutup → buat session baru');
+    }
     if (tgl_produksi && shift) {
       const existing = await getActiveDowntimeSession({
         tgl: tgl_produksi, shift: parseInt(shift, 10),
       });
+      
       if (existing) {
         console.log(`[DB] Downtime session sudah ada id=${existing.id} — skip INSERT`);
         return res.status(200).json({ ok: true, session_id: existing.id, reused: true });

@@ -35,10 +35,11 @@ async function insertUpdateDowntime(payload) {
   try {
     const [result] = await pool.execute(
       `INSERT INTO updateDowntime_m4
-         (tgl_produksi, shift, product,
-          total_minor_ms, total_setup_ms, total_downtime_ms,
-          session_start, last_updated)
-       VALUES (?, ?, ?, ?, ?, ?, NOW(), NOW())`,
+     (tgl_produksi, shift, product,
+      total_minor_ms, total_setup_ms, total_downtime_ms,
+      is_active,
+      session_start, last_updated)
+      VALUES (?, ?, ?, ?, ?, ?, 1, NOW(), NOW())`,
       [tgl_produksi, shift, product,
        total_minor_ms, total_setup_ms, total_downtime_ms]
     );
@@ -132,16 +133,35 @@ async function getPopupDowntime({ tgl, shift } = {}) {
 // Ini adalah sumber kebenaran tunggal — selalu tanya DB, bukan localStorage
 async function getActiveDowntimeSession({ tgl, shift } = {}) {
   if (!tgl || !shift) return null;
+
   const [rows] = await pool.execute(
-    `SELECT id FROM updateDowntime_m4
-     WHERE tgl_produksi = ? AND shift = ?
-     ORDER BY id DESC LIMIT 1`,
+    `SELECT id
+     FROM updateDowntime_m4
+     WHERE tgl_produksi = ?
+       AND shift = ?
+       AND is_active = 1
+     ORDER BY id DESC
+     LIMIT 1`,
     [tgl, parseInt(shift)]
   );
+
   return rows.length > 0 ? rows[0] : null;
+}
+async function closeActiveDowntimeSession({ tgl, shift }) {
+  await pool.execute(
+    `UPDATE updateDowntime_m4
+     SET is_active = 0
+     WHERE tgl_produksi = ?
+       AND shift = ?
+       AND is_active = 1`,
+    [tgl, shift]
+  );
+
+  console.log(`[DB] Session lama ditutup tgl=${tgl} shift=${shift}`);
 }
 
 module.exports = {
+  closeActiveDowntimeSession,
   getActiveDowntimeSession,
   insertUpdateDowntime,
   updateUpdateDowntime,

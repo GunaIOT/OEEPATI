@@ -998,7 +998,7 @@ async function dtInsertSession() {
       const chkRes  = await fetch(`${API_BASE}/downtime/active?tgl=${tgl}&shift=${shift}`);
       const chkData = await chkRes.json();
       if (chkData.ok && chkData.session_id) {
-        dtSessionId = chkData.session_id;
+        dtSessionId = chkData.session_id; 
         localStorage.setItem(DT_SESSION_KEY, String(dtSessionId));
         console.log(`[DB Downtime] ✅ Pakai session aktif id=${dtSessionId} (tidak INSERT baru)`);
         return;
