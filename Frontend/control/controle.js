@@ -17,11 +17,11 @@ document.addEventListener('DOMContentLoaded', () => {
   const POPUP_LIMIT     = 3  * 60 * 1000;
   const BREAKDOWN_LIMIT = 10 * 60 * 1000;
   const API_BASE        = `http://${window.location.hostname}:3000/api`;
-  const MACHINE_NUM     = 1;
+  const MACHINE_NUM     = 1;  // ← identitas mesin ini
 
   const BREAKDOWN_INDIVIDUAL = ['Seal', 'Coding', 'Vakum Bag', 'Capit', 'Weighting', 'Nirogen', 'MD'];
   const BREAKDOWN_SHARED     = ['Kompresor', 'Elevator', 'Roaster', 'DLL'];
-  
+
   let inputOne = 0, inputZero = 0, totalTarget = 0, setupTime = 0, runtime = 0;
   let minorBreakdownAcc = 0, downtimeAcc = 0;
   let minorBreakdownWatch = 0, watchStart = null, inDowntime = false;
@@ -67,8 +67,8 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   function clearState() { try { localStorage.removeItem(STORAGE_KEY); } catch(e) {} }
-  
-                          ;(function cleanLegacyDbKey() {
+
+  ;(function cleanLegacyDbKey() {
     ['oee_mesin1_session_id'].forEach(k => { try { localStorage.removeItem(k); } catch(e) {} });
   })();
 
@@ -135,7 +135,7 @@ document.addEventListener('DOMContentLoaded', () => {
           label=document.getElementById('popup-dt-label'),btn=document.getElementById('dt-submit-btn'),
           reasonWrap=document.getElementById('dt-reason-wrap');
     head.style.background='rgba(248,113,113,.07)'; tag.style.color='#f87171';
-    icon.innerText='🔴'; tag.innerText='Breakdown — Mesin 1';
+    icon.innerText='🔴'; tag.innerText=`Breakdown — Mesin ${MACHINE_NUM}`;
     sub.innerText='Mesin berhenti ≥ 10 menit — pilih alasan breakdown';
     label.innerText='Alasan Breakdown'; btn.className='dt-btn dt-btn-breakdown';
     reasonWrap.innerHTML=`<select id="dt-reason" style="width:100%;padding:11px 14px;box-sizing:border-box;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.09);border-radius:10px;color:#e2ddd5;font-family:'DM Mono',monospace;font-size:16px;outline:none;appearance:none;cursor:pointer;">
@@ -144,7 +144,7 @@ document.addEventListener('DOMContentLoaded', () => {
       <optgroup label="Shared (ambil durasi terlama)">${BREAKDOWN_SHARED.map(r=>`<option value="SHARED:${r}" style="background:#0d1117">${r} ⚡</option>`).join('')}</optgroup>
     </select>`;
     if (minorBreakdownEl) minorBreakdownEl.innerText = formatTime(minorBreakdownAcc);
-    try { mqttClient.publish('oee/machine1/downtime-start', '1'); } catch(e) {}
+    try { mqttClient.publish(`oee/machine${MACHINE_NUM}/downtime-start`, '1'); } catch(e) {}
     disableSubmitBtn();
   }
 
@@ -172,11 +172,11 @@ document.addEventListener('DOMContentLoaded', () => {
     if (popupOpen) { enableSubmitBtn(); return; }
     if (!inDowntime) {
       minorBreakdownAcc += minorBreakdownWatch; minorBreakdownWatch=0;
-      try { mqttClient.publish('oee/machine1/minor', JSON.stringify({minor_total:minorBreakdownAcc}), {retain:false}); } catch(e) {}
+      try { mqttClient.publish(`oee/machine${MACHINE_NUM}/minor`, JSON.stringify({minor_total:minorBreakdownAcc}), {retain:false}); } catch(e) {}
     } else {
       if (!popupSubmitted && minorBreakdownWatch > 0) {
         committedDowntime=minorBreakdownWatch; downtimeAcc+=minorBreakdownWatch; minorBreakdownWatch=0; inDowntime=false;
-        try { mqttClient.publish('oee/machine1/downtime', JSON.stringify({alasan:'auto-commit',durasi_ms:committedDowntime,downtime_total:downtimeAcc,minor_total:minorBreakdownAcc}),{retain:false}); } catch(e) {}
+        try { mqttClient.publish(`oee/machine${MACHINE_NUM}/downtime`, JSON.stringify({alasan:'auto-commit',durasi_ms:committedDowntime,downtime_total:downtimeAcc,minor_total:minorBreakdownAcc}),{retain:false}); } catch(e) {}
       }
     }
     popupSubmitted=false; updateDisplay();
@@ -188,7 +188,7 @@ document.addEventListener('DOMContentLoaded', () => {
           tag=document.getElementById('popup-dt-tag'),sub=document.getElementById('popup-dt-sub'),
           label=document.getElementById('popup-dt-label'),btn=document.getElementById('dt-submit-btn');
     head.style.background='rgba(251,146,60,.07)'; tag.style.color='#fb923c';
-    icon.innerText='⚠️'; tag.innerText='Minor Breakdown — Mesin 1';
+    icon.innerText='⚠️'; tag.innerText=`Minor Breakdown — Mesin ${MACHINE_NUM}`;
     sub.innerText='Mesin berhenti 3–9 menit (masuk Minor Breakdown)';
     label.innerText='Alasan Berhenti'; btn.className='dt-btn dt-btn-minor';
     document.getElementById('dt-reason-wrap').innerHTML=`<textarea id="dt-reason" rows="2" inputmode="text" enterkeyhint="done" placeholder="Ketik alasan berhenti..." autocomplete="off" style="width:100%;padding:11px 14px;box-sizing:border-box;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.09);border-radius:10px;color:#e2ddd5;font-family:'DM Mono',monospace;font-size:16px;outline:none;resize:none;height:72px;line-height:1.5;-webkit-user-select:text;user-select:text;touch-action:manipulation;cursor:text;"></textarea>`;
@@ -224,6 +224,7 @@ document.addEventListener('DOMContentLoaded', () => {
         body.minor_durasi_m1_ms = durasi_ms;
         body.minor_alasan_m1    = alasan;
       } else if (isShared) {
+        // FIX: shared downtime set m1 DAN m2
         body.downtime_durasi_m1_ms = durasi_ms;
         body.downtime_alasan_m1    = alasan;
         body.downtime_durasi_m2_ms = durasi_ms;
@@ -258,12 +259,13 @@ document.addEventListener('DOMContentLoaded', () => {
 
     if (logType === 'downtime') {
       if (isShared) {
-        try { mqttClient.publish('oee/shared-downtime', JSON.stringify({alasan:cleanLabel,durasi_ms:totalDur,dari_mesin:1}),{retain:false}); } catch(e) {}
+        // FIX: gunakan MACHINE_NUM — bukan hardcode 1
+        try { mqttClient.publish('oee/shared-downtime', JSON.stringify({alasan:cleanLabel,durasi_ms:totalDur,dari_mesin:MACHINE_NUM}),{retain:false}); } catch(e) {}
       } else {
-        try { mqttClient.publish('oee/machine1/downtime', JSON.stringify({alasan:cleanLabel,durasi_ms:totalDur,downtime_total:downtimeAcc,minor_total:minorBreakdownAcc})); } catch(e) {}
+        try { mqttClient.publish(`oee/machine${MACHINE_NUM}/downtime`, JSON.stringify({alasan:cleanLabel,durasi_ms:totalDur,downtime_total:downtimeAcc,minor_total:minorBreakdownAcc})); } catch(e) {}
       }
     } else {
-      try { mqttClient.publish('oee/machine1/minor', JSON.stringify({minor_total:minorBreakdownAcc}),{retain:false}); } catch(e) {}
+      try { mqttClient.publish(`oee/machine${MACHINE_NUM}/minor`, JSON.stringify({minor_total:minorBreakdownAcc}),{retain:false}); } catch(e) {}
     }
 
     await postPopupDowntimeToDB(logType, cleanLabel, totalDur, isShared);
@@ -299,16 +301,17 @@ document.addEventListener('DOMContentLoaded', () => {
   const mqttClient = mqtt.connect('ws://192.168.2.92:9002');
 
   mqttClient.on('connect', () => {
-    console.log('✅ MQTT Connected (Mesin 1)');
-    ['oee/machine1/count','oee/machine1/setup','oee/machine1/lost','oee/machine1/runtime',
-     'oee/machine1/target','oee/machine1/reset','oee/machine1/relay-status',
-     'oee/machine1/setup-info','oee/shared-downtime'].forEach(t=>mqttClient.subscribe(t));
+    console.log(`✅ MQTT Connected (Mesin ${MACHINE_NUM})`);
+    [`oee/machine${MACHINE_NUM}/count`,`oee/machine${MACHINE_NUM}/setup`,`oee/machine${MACHINE_NUM}/lost`,
+     `oee/machine${MACHINE_NUM}/runtime`,`oee/machine${MACHINE_NUM}/target`,`oee/machine${MACHINE_NUM}/reset`,
+     `oee/machine${MACHINE_NUM}/relay-status`,`oee/machine${MACHINE_NUM}/setup-info`,'oee/shared-downtime'
+    ].forEach(t=>mqttClient.subscribe(t));
   });
 
   mqttClient.on('message', (topic, message) => {
     const payload = message.toString().trim();
-    
-    if (topic === 'oee/machine1/setup-info') {
+
+    if (topic === `oee/machine${MACHINE_NUM}/setup-info`) {
       try {
         const info = JSON.parse(payload);
         setupInfoLocal = { shift:info.shift||1, product:info.product||'-', date:info.date||new Date().toISOString().split('T')[0] };
@@ -316,26 +319,27 @@ document.addEventListener('DOMContentLoaded', () => {
       return;
     }
 
-    if (topic === 'oee/machine1/relay-status') { if(payload==='ON') handleSensorOn(); if(payload==='OFF') handleSensorOff(); return; }
+    if (topic === `oee/machine${MACHINE_NUM}/relay-status`) { if(payload==='ON') handleSensorOn(); if(payload==='OFF') handleSensorOff(); return; }
 
-    if (topic === 'oee/machine1/count') {
+    if (topic === `oee/machine${MACHINE_NUM}/count`) {
       if (!sensorEnabled) return;
       if (payload==='1') { inputOne++; if(sensorStatus) sensorStatus.innerText='ON'; onOneDetected(); }
       else               { inputZero++; if(sensorStatus) sensorStatus.innerText='OFF'; if(inputZeroEl) inputZeroEl.innerText=inputZero; onZeroDetected(); }
       updateDisplay(); return;
     }
 
-    if (topic==='oee/machine1/setup')   { setupTime  = parseInt(payload)||0; }
-    if (topic==='oee/machine1/runtime') { runtime    = parseInt(payload)||0; }
-    if (topic==='oee/machine1/target')  { const val=parseInt(payload)||0; totalTarget=val; if(targetInput) targetInput.value=val>0?val:''; }
-    if (topic==='oee/machine1/reset')   { doReset(); console.log('🔄 RESET received (Mesin 1)'); }
+    if (topic===`oee/machine${MACHINE_NUM}/setup`)   { setupTime  = parseInt(payload)||0; }
+    if (topic===`oee/machine${MACHINE_NUM}/runtime`) { runtime    = parseInt(payload)||0; }
+    if (topic===`oee/machine${MACHINE_NUM}/target`)  { const val=parseInt(payload)||0; totalTarget=val; if(targetInput) targetInput.value=val>0?val:''; }
+    if (topic===`oee/machine${MACHINE_NUM}/reset`)   { doReset(); console.log(`🔄 RESET received (Mesin ${MACHINE_NUM})`); }
 
     if (topic==='oee/shared-downtime') {
       try {
         const ev=JSON.parse(payload);
-        if(ev.dari_mesin!==1){
+        // FIX: abaikan event dari mesin sendiri
+        if(ev.dari_mesin !== MACHINE_NUM){
           const durasi=ev.durasi_ms||0;
-          if(durasi>downtimeAcc){ downtimeAcc=durasi; addLog('downtime',ev.alasan+' ⚡ (M2: '+fmtMM(durasi)+')',null,durasi); updateDisplay(); }
+          if(durasi>downtimeAcc){ downtimeAcc=durasi; addLog('downtime',`${ev.alasan} ⚡ (M${ev.dari_mesin}: ${fmtMM(durasi)})`,null,durasi); updateDisplay(); }
         }
       } catch(e) {}
     }
@@ -354,23 +358,23 @@ document.addEventListener('DOMContentLoaded', () => {
     renderLog();updateDisplay();
   }
 
-  document.getElementById('btnSensorOn')?.addEventListener('click',  () => { mqttClient.publish('oee/machine1/relay','ON');  handleSensorOn();  });
-  document.getElementById('btnSensorOff')?.addEventListener('click', () => { mqttClient.publish('oee/machine1/relay','OFF'); handleSensorOff(); });
+  document.getElementById('btnSensorOn')?.addEventListener('click',  () => { mqttClient.publish(`oee/machine${MACHINE_NUM}/relay`,'ON');  handleSensorOn();  });
+  document.getElementById('btnSensorOff')?.addEventListener('click', () => { mqttClient.publish(`oee/machine${MACHINE_NUM}/relay`,'OFF'); handleSensorOff(); });
 
   document.getElementById('btnRestartESP')?.addEventListener('click', async () => {
-    if (!confirm('⚠️ Restart ESP32 Mesin 1?\n\n→ Koneksi MQTT putus sementara\n→ Counter di ESP32 reset\n→ Setelah restart: isi shift & produk lalu tekan Simpan Setup\n→ Sistem akan reconnect otomatis')) return;
+    if (!confirm(`⚠️ Restart ESP32 Mesin ${MACHINE_NUM}?\n\n→ Koneksi MQTT putus sementara\n→ Counter di ESP32 reset\n→ Setelah restart: isi shift & produk lalu tekan Simpan Setup\n→ Sistem akan reconnect otomatis`)) return;
     showToast('🔄 Mengirim sinyal restart...', '#fb923c');
-    mqttClient.publish('oee/machine1/restarted', '1', {retain:true});
-    mqttClient.publish('oee/machine1/restart', 'RESTART', {retain:false});
+    mqttClient.publish(`oee/machine${MACHINE_NUM}/restarted`, '1', {retain:true});
+    mqttClient.publish(`oee/machine${MACHINE_NUM}/restart`, 'RESTART', {retain:false});
     showToast('🔄 Perintah RESTART ESP32 dikirim...', '#f87171');
     setTimeout(() => window.location.reload(), 4000);
   });
 
   document.getElementById('btnReset')?.addEventListener('click', () => {
-    if (!confirm('⚠️ Reset data produksi Mesin 1?\n\nTarget produksi akan tetap tidak berubah.')) return;
+    if (!confirm(`⚠️ Reset data produksi Mesin ${MACHINE_NUM}?\n\nTarget produksi akan tetap tidak berubah.`)) return;
     doReset();
     if(totalTargetEl) totalTargetEl.innerText=String(totalTarget);
-    mqttClient.publish('oee/machine1/reset','RESET',{retain:false});
+    mqttClient.publish(`oee/machine${MACHINE_NUM}/reset`,'RESET',{retain:false});
     updateDisplay();
   });
 
@@ -381,8 +385,8 @@ document.addEventListener('DOMContentLoaded', () => {
     const product=document.getElementById('productName')?.value||'';
     if (!target) { alert('⚠️ Masukkan Target Produksi terlebih dahulu!'); return; }
     totalTarget=target;
-    mqttClient.publish('oee/machine1/target', String(target), {retain:true});
-    mqttClient.publish('oee/machine1/setup-info', JSON.stringify({shift:parseInt(shift),product:product||'-',date}), {retain:true});
+    mqttClient.publish(`oee/machine${MACHINE_NUM}/target`, String(target), {retain:true});
+    mqttClient.publish(`oee/machine${MACHINE_NUM}/setup-info`, JSON.stringify({shift:parseInt(shift),product:product||'-',date}), {retain:true});
     alert(`✅ Setup tersimpan!\nTarget : ${target} pcs\nEst.   : ${formatEstimasi(target*MS_PER_PCS)}\nProduk : ${product||'-'}\nShift  : ${shift}`);
     updateDisplay();
   });
@@ -403,5 +407,5 @@ document.addEventListener('DOMContentLoaded', () => {
   loadState(); renderLog(); updateDisplay(); updateRelayBadge(sensorEnabled);
   setInterval(saveState, 10000);
 
-  console.log('✅ controle.js loaded — DB popup downtime aktif');
+  console.log(`✅ controle.js loaded — Mesin ${MACHINE_NUM}`);
 });

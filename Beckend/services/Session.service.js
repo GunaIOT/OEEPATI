@@ -11,10 +11,12 @@ function calcOEE({
   const operatingMs = Math.max(loadingMs - setup_time_ms - downtime_ms, 0);
   const netOpMs     = Math.max(operatingMs - minor_breakdown_ms, 0);
   const netOpMenit  = netOpMs / 60000;
+
   const ar  = loadingMs   > 0 ? Math.max(((loadingMs - setup_time_ms - downtime_ms) / loadingMs) * 100, 0) : 0;
   const pr  = operatingMs > 0 ? Math.min((netOpMs / operatingMs) * 100, 100) : 0;
   const qr  = netOpMenit  > 0 ? Math.max(Math.min((1 - (total_reject / 58) / netOpMenit) * 100, 100), 0) : 0;
   const oee = (ar / 100) * (pr / 100) * (qr / 100) * 100;
+
   return {
     loading_time_s:       msToSec(loadingMs),
     operating_time_s:     msToSec(operatingMs),
@@ -27,15 +29,30 @@ function calcOEE({
 }
 
 async function insertRejectSession(payload) {
-  const { tgl_produksi, shift = 1, product = '-', target = 0,
-    kosong = 0, coding = 0, seal = 0, kurang_angin = 0, gramasi = 0, lain_lain = 0 } = payload;
+  const {
+    tgl_produksi,
+    shift        = 1,
+    product      = '-',
+    target       = 0,
+    kosong       = 0,
+    coding       = 0,
+    seal         = 0,
+    kurang_angin = 0,
+    gramasi      = 0,
+    lain_lain    = 0,
+  } = payload;
+
   const total_reject = kosong + coding + seal + kurang_angin + gramasi + lain_lain;
+
   const [result] = await pool.execute(
-    `INSERT INTO reject_mesin4 (tgl_produksi, shift, product, target, waktu_submit,
-      kosong, coding, seal, kurang_angin, gramasi, lain_lain, total_reject)
+    `INSERT INTO reject_mesin4
+       (tgl_produksi, shift, product, target, waktu_submit,
+        kosong, coding, seal, kurang_angin, gramasi, lain_lain, total_reject)
      VALUES (?, ?, ?, ?, NOW(), ?, ?, ?, ?, ?, ?, ?)`,
-    [tgl_produksi, shift, product, target, kosong, coding, seal, kurang_angin, gramasi, lain_lain, total_reject]
+    [tgl_produksi, shift, product, target,
+     kosong, coding, seal, kurang_angin, gramasi, lain_lain, total_reject]
   );
+
   return { id: result.insertId, total_reject };
 }
 
@@ -44,48 +61,170 @@ async function getRejectSessions({ tgl, shift } = {}) {
   if (tgl)   { where.push('tgl_produksi = ?'); params.push(tgl); }
   if (shift) { where.push('shift = ?'); params.push(shift); }
   const [rows] = await pool.execute(
-    `SELECT * FROM reject_mesin4 ${where.length ? 'WHERE ' + where.join(' AND ') : ''} ORDER BY id DESC LIMIT 500`,
+    `SELECT * FROM reject_mesin4
+     ${where.length ? 'WHERE ' + where.join(' AND ') : ''}
+     ORDER BY id DESC LIMIT 500`,
     params
   );
   return rows;
 }
 
+// ── FIX: insertSession() sekarang pakai target_m1, target_m2, dan semua field OEE
 async function insertSession(payload) {
-  const { tgl_produksi, shift = 1, product = '-',
-    target_m1 = 0, target_m2 = 0, finish_goods = 0, total_reject = 0,
-    setup_time_ms = 0, minor_breakdown_ms = 0, downtime_ms = 0 } = payload;
-  const oee = calcOEE({ target_m1, target_m2, setup_time_ms, downtime_ms, minor_breakdown_ms, total_reject });
+  const {
+    tgl_produksi,
+    shift              = 1,
+    product            = '-',
+    target_m1          = 0,
+    target_m2          = 0,
+    finish_goods       = 0,
+    finish_goods_m1    = 0,
+    finish_goods_m2    = 0,
+    total_reject       = 0,
+    setup_time_ms      = 0,
+    minor_breakdown_ms = 0,
+    downtime_ms        = 0,
+  } = payload;
+
+  // Hitung target gabungan untuk backward-compat kolom target
+  const target = target_m1 + target_m2;
+
+  const oee = calcOEE({
+    target_m1,
+    target_m2,
+    setup_time_ms,
+    downtime_ms,
+    minor_breakdown_ms,
+    total_reject,
+  });
+
   const [result] = await pool.execute(
     `INSERT INTO hasil_produksi
-     (tgl_produksi, shift, product, target_m1, target_m2, target,
-      finish_goods, total_reject, setup_time_ms, minor_breakdown_ms, downtime_ms,
-      loading_time_s, operating_time_s, net_operating_time_s, ar, pr, qr, oee, session_start, last_updated)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())`,
-    [tgl_produksi, shift, product, target_m1, target_m2, target_m1 + target_m2,
-     finish_goods, total_reject, setup_time_ms, minor_breakdown_ms, downtime_ms,
-     oee.loading_time_s, oee.operating_time_s, oee.net_operating_time_s,
-     oee.ar, oee.pr, oee.qr, oee.oee]
+     (
+       tgl_produksi,
+       shift,
+       product,
+       target,
+       target_m1,
+       target_m2,
+       finish_goods,
+       finish_goods_m1,
+       finish_goods_m2,
+       total_reject,
+       setup_time_ms,
+       minor_breakdown_ms,
+       downtime_ms,
+       loading_time_s,
+       operating_time_s,
+       net_operating_time_s,
+       ar,
+       pr,
+       qr,
+       oee,
+       session_start,
+       last_updated,
+       is_active
+     )
+     VALUES
+     (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW(), 1)`,
+    [
+      tgl_produksi,
+      shift,
+      product,
+      target,
+      target_m1,
+      target_m2,
+      finish_goods,
+      finish_goods_m1,
+      finish_goods_m2,
+      total_reject,
+      setup_time_ms,
+      minor_breakdown_ms,
+      downtime_ms,
+      oee.loading_time_s,
+      oee.operating_time_s,
+      oee.net_operating_time_s,
+      oee.ar,
+      oee.pr,
+      oee.qr,
+      oee.oee,
+    ]
   );
+
+  console.log(`[DB Produksi] INSERT hasil_produksi id=${result.insertId} OEE=${oee.oee}%`);
   return { id: result.insertId, ...oee };
 }
 
+// ── FIX: updateSession() sekarang simpan semua field OEE, bukan hanya target+finish_goods
 async function updateSession(sessionId, payload) {
-  const { target_m1 = 0, target_m2 = 0, finish_goods = 0, total_reject = 0,
-    setup_time_ms = 0, minor_breakdown_ms = 0, downtime_ms = 0 } = payload;
-  const oee = calcOEE({ target_m1, target_m2, setup_time_ms, downtime_ms, minor_breakdown_ms, total_reject });
+  const {
+    target_m1          = 0,
+    target_m2          = 0,
+    finish_goods       = 0,
+    finish_goods_m1    = 0,
+    finish_goods_m2    = 0,
+    total_reject       = 0,
+    setup_time_ms      = 0,
+    minor_breakdown_ms = 0,
+    downtime_ms        = 0,
+  } = payload;
+
+  const target = target_m1 + target_m2;
+
+  const oee = calcOEE({
+    target_m1,
+    target_m2,
+    setup_time_ms,
+    downtime_ms,
+    minor_breakdown_ms,
+    total_reject,
+  });
+
   await pool.execute(
     `UPDATE hasil_produksi SET
-      target_m1 = ?, target_m2 = ?, target = ?,
-      finish_goods = ?, total_reject = ?,
-      setup_time_ms = ?, minor_breakdown_ms = ?, downtime_ms = ?,
-      loading_time_s = ?, operating_time_s = ?, net_operating_time_s = ?,
-      ar = ?, pr = ?, qr = ?, oee = ?, last_updated = NOW()
+       target               = ?,
+       target_m1            = ?,
+       target_m2            = ?,
+       finish_goods         = ?,
+       finish_goods_m1      = ?,
+       finish_goods_m2      = ?,
+       total_reject         = ?,
+       setup_time_ms        = ?,
+       minor_breakdown_ms   = ?,
+       downtime_ms          = ?,
+       loading_time_s       = ?,
+       operating_time_s     = ?,
+       net_operating_time_s = ?,
+       ar                   = ?,
+       pr                   = ?,
+       qr                   = ?,
+       oee                  = ?,
+       last_updated         = NOW(),
+       is_active            = 1
      WHERE id = ?`,
-    [target_m1, target_m2, target_m1 + target_m2, finish_goods, total_reject,
-     setup_time_ms, minor_breakdown_ms, downtime_ms,
-     oee.loading_time_s, oee.operating_time_s, oee.net_operating_time_s,
-     oee.ar, oee.pr, oee.qr, oee.oee, sessionId]
+    [
+      target,
+      target_m1,
+      target_m2,
+      finish_goods,
+      finish_goods_m1,
+      finish_goods_m2,
+      total_reject,
+      setup_time_ms,
+      minor_breakdown_ms,
+      downtime_ms,
+      oee.loading_time_s,
+      oee.operating_time_s,
+      oee.net_operating_time_s,
+      oee.ar,
+      oee.pr,
+      oee.qr,
+      oee.oee,
+      sessionId,
+    ]
   );
+
+  console.log(`[DB Produksi] UPDATE hasil_produksi id=${sessionId} OEE=${oee.oee}%`);
   return oee;
 }
 
@@ -94,17 +233,20 @@ async function getSessions({ tgl, shift } = {}) {
   if (tgl)   { where.push('tgl_produksi = ?'); params.push(tgl); }
   if (shift) { where.push('shift = ?'); params.push(shift); }
   const [rows] = await pool.execute(
-    `SELECT * FROM hasil_produksi ${where.length ? 'WHERE ' + where.join(' AND ') : ''} ORDER BY id DESC LIMIT 200`,
+    `SELECT * FROM hasil_produksi
+     ${where.length ? 'WHERE ' + where.join(' AND ') : ''}
+     ORDER BY id DESC LIMIT 200`,
     params
   );
   return rows;
 }
 
-// ── Cek session aktif berdasarkan tgl + shift
 async function getActiveSession({ tgl, shift } = {}) {
   if (!tgl || !shift) return null;
   const [rows] = await pool.execute(
-    `SELECT id FROM hasil_produksi WHERE tgl_produksi = ? AND shift = ? ORDER BY id DESC LIMIT 1`,
+    `SELECT id FROM hasil_produksi
+     WHERE tgl_produksi = ? AND shift = ? AND is_active = 1
+     ORDER BY id DESC LIMIT 1`,
     [tgl, parseInt(shift)]
   );
   return rows.length > 0 ? rows[0] : null;
@@ -112,13 +254,18 @@ async function getActiveSession({ tgl, shift } = {}) {
 
 async function getSessionById(sessionId) {
   const [rows] = await pool.execute(
-    `SELECT id, tgl_produksi, shift, product,
-       target_m1, target_m2, target,
-       finish_goods, total_reject,
-       setup_time_ms, minor_breakdown_ms, downtime_ms,
-       loading_time_s, operating_time_s, net_operating_time_s,
-       ar, pr, qr, oee, session_start, last_updated
-     FROM hasil_produksi WHERE id = ? LIMIT 1`,
+    `SELECT
+        id, tgl_produksi, shift, product,
+        target, target_m1, target_m2,
+        finish_goods, finish_goods_m1, finish_goods_m2,
+        total_reject,
+        setup_time_ms, minor_breakdown_ms, downtime_ms,
+        loading_time_s, operating_time_s, net_operating_time_s,
+        ar, pr, qr, oee,
+        session_start, last_updated, is_active
+     FROM hasil_produksi
+     WHERE id = ?
+     LIMIT 1`,
     [sessionId]
   );
   return rows.length > 0 ? rows[0] : null;

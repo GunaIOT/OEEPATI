@@ -38,10 +38,6 @@ function renderSetupInfo() {
   if (elProd)  elProd.innerText  = prod1;
 }
 
-// ══════════════════════════════════════════════════════════════
-//  STATE — hanya dipakai sebagai buffer MQTT real-time
-//  Nilai awal (saat page load) di-SYNC dari server, bukan localStorage
-// ══════════════════════════════════════════════════════════════
 function makeState() {
   return {
     inputOne: 0, inputZero: 0, totalTarget: 0, setupTime: 0,
@@ -60,15 +56,11 @@ let _resetInProgress = false;
 const resetFlags = { m1: false, m2: false };
 function bothReset() { return resetFlags.m1 && resetFlags.m2; }
 
-// localStorage hanya untuk session ID, BUKAN untuk state produksi
 const STORAGE_KEY_DASH = 'oee_dashboard_state';
 
-// Simpan hanya sensor enabled state (bukan counter) — counter dari server
 function saveDashState() {
   const snap = {
     state1: {
-      // Counter TIDAK disimpan di localStorage lagi
-      // hanya timing yang susah direcovery dari server
       minorBreakdownWatch: state1.minorBreakdownWatch + (state1.watchStart !== null ? Date.now() - state1.watchStart : 0),
       sensorEnabled:       sensor1Enabled,
       online:              state1.online,
@@ -86,7 +78,6 @@ function saveDashState() {
   try { localStorage.setItem(STORAGE_KEY_DASH, JSON.stringify(snap)); } catch(e) {}
 }
 
-// Load hanya sensor state dari localStorage (bukan counter)
 function loadLocalSensorState() {
   try {
     const raw = localStorage.getItem(STORAGE_KEY_DASH);
@@ -115,9 +106,8 @@ function clearDashStateAll() {
 }
 
 // ══════════════════════════════════════════════════════════════
-//  SYNC STATE DARI SERVER — dipanggil saat page load
-//  Ambil data session aktif dari DB, isi ke state1/state2
-//  Sehingga laptop A, B, C semua mulai dari angka yang sama
+//  FIX: syncStateFromServer restore per mesin (bukan estimasi 50/50)
+//  DB sekarang punya kolom target_m1, target_m2, finish_goods_m1, finish_goods_m2
 // ══════════════════════════════════════════════════════════════
 async function syncStateFromServer() {
   try {
@@ -126,7 +116,6 @@ async function syncStateFromServer() {
 
     showSyncNotif('Sinkronisasi data dari server...');
 
-    // 1. Cek session produksi aktif
     const sessionRes  = await fetch(`${API_BASE}/session/active?tgl=${tgl}&shift=${shift}`);
     const sessionData = await sessionRes.json();
 
@@ -134,39 +123,46 @@ async function syncStateFromServer() {
       dbSessionId = sessionData.session_id;
       localStorage.setItem(DB_SESSION_KEY, String(dbSessionId));
 
-      // 2. Ambil detail session untuk restore counter
       const detailRes  = await fetch(`${API_BASE}/session/${dbSessionId}`);
       const detailData = await detailRes.json();
 
       if (detailData.ok && detailData.data) {
         const d = detailData.data;
 
-        // Restore data produksi dari server ke state
-        // finish_goods = inputOne gabungan kedua mesin (dikurangi reject)
-        // Estimasi pembagian 50/50 jika tidak ada data per mesin
-        const finishGoods = (d.finish_goods || 0) + (d.total_reject || 0); // raw good sebelum reject
-        state1.inputOne  = Math.round(finishGoods / 2);
-        state2.inputOne  = finishGoods - state1.inputOne;
+        // FIX: restore per mesin dari kolom terpisah — bukan estimasi 50/50
+        if (d.finish_goods_m1 != null && d.finish_goods_m2 != null) {
+          state1.inputOne = d.finish_goods_m1 || 0;
+          state2.inputOne = d.finish_goods_m2 || 0;
+        } else {
+          // Fallback ke 50/50 untuk data lama sebelum migrasi
+          const finishGoods = (d.finish_goods || 0) + (d.total_reject || 0);
+          state1.inputOne   = Math.round(finishGoods / 2);
+          state2.inputOne   = finishGoods - state1.inputOne;
+        }
 
-        // Target
-        state1.totalTarget = d.target_m1 || Math.round((d.target || 0) / 2);
-        state2.totalTarget = d.target_m2 || ((d.target || 0) - state1.totalTarget);
+        // FIX: restore target per mesin dari kolom target_m1/m2
+        if (d.target_m1 != null && d.target_m2 != null) {
+          state1.totalTarget = d.target_m1 || 0;
+          state2.totalTarget = d.target_m2 || 0;
+        } else {
+          // Fallback ke 50/50 untuk data lama
+          state1.totalTarget = Math.round((d.target || 0) / 2);
+          state2.totalTarget = (d.target || 0) - state1.totalTarget;
+        }
 
-        // Times (dalam ms, server simpan dalam detik)
-        state1.setupTime    = Math.round((d.setup_time_ms || 0) / 2);
-        state2.setupTime    = Math.round((d.setup_time_ms || 0) / 2);
-        state1.downtimeAcc  = Math.round((d.downtime_ms || 0) / 2);
-        state2.downtimeAcc  = Math.round((d.downtime_ms || 0) / 2);
+        // FIX: restore waktu OEE dari kolom ms (bukan detik)
+        state1.setupTime         = Math.round((d.setup_time_ms      || 0) / 2);
+        state2.setupTime         = Math.round((d.setup_time_ms      || 0) / 2);
+        state1.downtimeAcc       = Math.round((d.downtime_ms        || 0) / 2);
+        state2.downtimeAcc       = Math.round((d.downtime_ms        || 0) / 2);
         state1.minorBreakdownAcc = Math.round((d.minor_breakdown_ms || 0) / 2);
         state2.minorBreakdownAcc = Math.round((d.minor_breakdown_ms || 0) / 2);
 
         totalRejectFromPackaging = d.total_reject || 0;
 
-        console.log(`[Dashboard SYNC] ✅ State di-restore dari server — session id=${dbSessionId}`, {
-          inputOne1: state1.inputOne,
-          inputOne2: state2.inputOne,
-          target1: state1.totalTarget,
-          target2: state2.totalTarget,
+        console.log('[Dashboard SYNC] ✅ State di-restore dari server', {
+          inputOne1: state1.inputOne, inputOne2: state2.inputOne,
+          target1: state1.totalTarget, target2: state2.totalTarget,
           reject: totalRejectFromPackaging,
         });
 
@@ -176,13 +172,11 @@ async function syncStateFromServer() {
       console.log('[Dashboard SYNC] Tidak ada session aktif hari ini — mulai fresh');
     }
 
-    // 3. Cek downtime session
     const dtRes  = await fetch(`${API_BASE}/downtime/active?tgl=${tgl}&shift=${shift}`);
     const dtData = await dtRes.json();
     if (dtData.ok && dtData.session_id) {
       dtSessionId = dtData.session_id;
       localStorage.setItem(DT_SESSION_KEY, String(dtSessionId));
-      console.log(`[Dashboard SYNC] Downtime session id=${dtSessionId}`);
     }
 
     hideSyncNotif();
@@ -193,7 +187,6 @@ async function syncStateFromServer() {
   } catch(err) {
     console.warn('[Dashboard SYNC] Gagal sync dari server:', err.message);
     hideSyncNotif();
-    // Fallback: tetap jalan dengan state 0 (lebih baik dari data stale localStorage)
   }
 }
 
@@ -590,10 +583,8 @@ mqttClient.on('message', async (topic, message) => {
     return;
   }
 
-  if (topic === 'oee/machine1/relay-status') {
-    sensor1Enabled = (payload === 'ON');
-    saveDashState();
-  }
+  if (topic === 'oee/machine1/relay-status') { sensor1Enabled = (payload === 'ON'); saveDashState(); }
+  if (topic === 'oee/machine2/relay-status') { sensor2Enabled = (payload === 'ON'); saveDashState(); }
 
   if (topic === 'oee/machine1/count') {
     if (!sensor1Enabled) return;
@@ -624,11 +615,6 @@ mqttClient.on('message', async (topic, message) => {
     resetFlags.m1 = true;
     if (bothReset()) await handleBothReset();
     else showWaitingResetNotif(1);
-  }
-
-  if (topic === 'oee/machine2/relay-status') {
-    sensor2Enabled = (payload === 'ON');
-    saveDashState();
   }
 
   if (topic === 'oee/machine2/count') {
@@ -714,7 +700,6 @@ setInterval(() => {
   if (state2.online && now - lastMsg2 > 30000) { state2.online = false; setMachineStatus(2, false); updateSummary(); }
 }, 5000);
 
-// ── Auto re-sync dari server setiap 5 menit (untuk laptop yang baru buka)
 setInterval(async () => {
   if (!_tabActive) return;
   if (dbSessionId) {
@@ -723,16 +708,19 @@ setInterval(async () => {
       const detailData = await detailRes.json();
       if (detailData.ok && detailData.data) {
         const d = detailData.data;
-        // Hanya update jika nilai server lebih besar (MQTT real-time bisa sudah lebih maju)
-        const serverGood = (d.finish_goods || 0) + (d.total_reject || 0);
-        const localGood  = state1.inputOne + state2.inputOne;
-        if (serverGood > localGood) {
-          state1.inputOne = Math.round(serverGood / 2);
-          state2.inputOne = serverGood - state1.inputOne;
-          console.log('[Dashboard] Re-sync counter dari server:', serverGood);
-          updateDisplay1(); updateDisplay2();
+        // FIX: re-sync per mesin jika server lebih maju
+        if (d.finish_goods_m1 != null && d.finish_goods_m2 != null) {
+          if (d.finish_goods_m1 > state1.inputOne) { state1.inputOne = d.finish_goods_m1; updateDisplay1(); }
+          if (d.finish_goods_m2 > state2.inputOne) { state2.inputOne = d.finish_goods_m2; updateDisplay2(); }
+        } else {
+          const serverGood = (d.finish_goods || 0) + (d.total_reject || 0);
+          const localGood  = state1.inputOne + state2.inputOne;
+          if (serverGood > localGood) {
+            state1.inputOne = Math.round(serverGood / 2);
+            state2.inputOne = serverGood - state1.inputOne;
+            updateDisplay1(); updateDisplay2();
+          }
         }
-        // Update reject
         const serverReject = d.total_reject || 0;
         if (serverReject !== totalRejectFromPackaging) {
           totalRejectFromPackaging = serverReject;
@@ -812,7 +800,6 @@ function gaugeColor(p) {
 }
 
 function updateOEE() {
-  const rawGood          = state1.inputOne + state2.inputOne;
   const loadingTimeMs    = ((state1.totalTarget || 0) + (state2.totalTarget || 0)) * MS_PER_PCS_PARALEL;
   const avgSetupMs       = ((state1.setupTime || 0) + (state2.setupTime || 0)) / 2;
   const totalBreakdownMs = (state1.downtimeAcc || 0) + (state2.downtimeAcc || 0);
@@ -863,23 +850,34 @@ let dbSessionId    = null;
 let dbSaveInterval = null;
 let _dbInsertLock  = false;
 
+// FIX: getDbPayload kirim semua field termasuk per-mesin dan ms fields
 function getDbPayload() {
-  const totalTarget = (state1.totalTarget || 0) + (state2.totalTarget || 0);
-  const rawGood     = (state1.inputOne   || 0) + (state2.inputOne   || 0);
-  const finishGoods = Math.max(0, rawGood - totalRejectFromPackaging);
-  const avgSetupMs  = ((state1.setupTime || 0) + (state2.setupTime || 0)) / 2;
-  const totalDtMs   = (state1.downtimeAcc || 0) + (state2.downtimeAcc || 0);
-  const mbLiveM1    = (state1.minorBreakdownAcc || 0) + getWatchTotal(state1);
-  const mbLiveM2    = (state2.minorBreakdownAcc || 0) + getWatchTotal(state2);
-  const avgMinorMs  = (mbLiveM1 + mbLiveM2) / 2;
+  const rawGood1    = state1.inputOne || 0;
+  const rawGood2    = state2.inputOne || 0;
+  const totalReject = totalRejectFromPackaging || 0;
+  // finish_goods per mesin: kurangi reject secara proporsional
+  const totalRawGood = rawGood1 + rawGood2;
+  const ratio1 = totalRawGood > 0 ? rawGood1 / totalRawGood : 0.5;
+  const ratio2 = totalRawGood > 0 ? rawGood2 / totalRawGood : 0.5;
+  const rejectM1 = Math.round(totalReject * ratio1);
+  const rejectM2 = totalReject - rejectM1;
+
+  const avgSetupMs = ((state1.setupTime || 0) + (state2.setupTime || 0)) / 2;
+  const totalDtMs  = (state1.downtimeAcc || 0) + (state2.downtimeAcc || 0);
+  const mbLiveM1   = (state1.minorBreakdownAcc || 0) + getWatchTotal(state1);
+  const mbLiveM2   = (state2.minorBreakdownAcc || 0) + getWatchTotal(state2);
+  const avgMinorMs = (mbLiveM1 + mbLiveM2) / 2;
+
   return {
     tgl_produksi:       setupInfo1.date    || new Date().toISOString().split('T')[0],
     shift:              setupInfo1.shift   || 1,
     product:            setupInfo1.product || '-',
     target_m1:          state1.totalTarget || 0,
     target_m2:          state2.totalTarget || 0,
-    finish_goods:       finishGoods,
-    total_reject:       totalRejectFromPackaging || 0,
+    finish_goods:       Math.max(0, totalRawGood - totalReject),
+    finish_goods_m1:    Math.max(0, rawGood1 - rejectM1),
+    finish_goods_m2:    Math.max(0, rawGood2 - rejectM2),
+    total_reject:       totalReject,
     setup_time_ms:      Math.round(avgSetupMs),
     minor_breakdown_ms: Math.round(avgMinorMs),
     downtime_ms:        Math.round(totalDtMs),
@@ -891,7 +889,6 @@ async function dbInsertSession() {
   _dbInsertLock = true;
   localStorage.setItem(DB_SESSION_KEY, 'pending');
   try {
-    // Cek dulu apakah sudah ada — jangan dobel insert
     const tgl   = setupInfo1.date  || new Date().toISOString().split('T')[0];
     const shift = setupInfo1.shift || 1;
     try {
@@ -981,7 +978,7 @@ function getDtPayload() {
 }
 
 let _dtInsertLock = false;
- 
+
 async function dtInsertSession() {
   if (dtSessionId) return;
   if (_dtInsertLock) {
@@ -992,23 +989,20 @@ async function dtInsertSession() {
   try {
     const tgl   = setupInfo1.date  || new Date().toISOString().split('T')[0];
     const shift = setupInfo1.shift || 1;
- 
-    // Step 1: tanya server — ada session aktif untuk tgl+shift ini?
+
     try {
       const chkRes  = await fetch(`${API_BASE}/downtime/active?tgl=${tgl}&shift=${shift}`);
       const chkData = await chkRes.json();
       if (chkData.ok && chkData.session_id) {
-        dtSessionId = chkData.session_id; 
+        dtSessionId = chkData.session_id;
         localStorage.setItem(DT_SESSION_KEY, String(dtSessionId));
-        console.log(`[DB Downtime] ✅ Pakai session aktif id=${dtSessionId} (tidak INSERT baru)`);
+        console.log(`[DB Downtime] ✅ Pakai session aktif id=${dtSessionId}`);
         return;
       }
     } catch(e) {
       console.warn('[DB Downtime] Gagal cek /downtime/active:', e.message);
     }
- 
-    // Step 2: belum ada → POST ke server
-    // Server juga punya guard di route-nya, aman dari race condition
+
     const res  = await fetch(`${API_BASE}/downtime/update/start`, {
       method:  'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -1018,8 +1012,7 @@ async function dtInsertSession() {
     if (data.ok) {
       dtSessionId = data.session_id;
       localStorage.setItem(DT_SESSION_KEY, String(dtSessionId));
-      const label = data.reused ? 'Reused' : 'INSERT baru';
-      console.log(`[DB Downtime] ✅ ${label} id=${dtSessionId}`);
+      console.log(`[DB Downtime] ✅ ${data.reused ? 'Reused' : 'INSERT baru'} id=${dtSessionId}`);
     }
   } catch(err) {
     console.warn('[DB Downtime] dtInsertSession error:', err.message);
@@ -1125,4 +1118,4 @@ setInterval(() => {
 setInterval(saveDashState, 10000);
 setInterval(() => { if (dtSessionId) dtUpdateSession(); }, 60000);
 
-console.log('✅ dashboard.js — sync state dari server saat page load');
+console.log('✅ dashboard.js — all bugs fixed');
